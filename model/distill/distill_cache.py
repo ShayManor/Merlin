@@ -24,6 +24,8 @@ from student import build_student, param_report          # noqa: E402
 from distill_online import distill_loss                   # noqa: E402
 from data import load_gt_depth                            # noqa: E402
 from metrics import depth_metrics, scale_error            # noqa: E402
+sys.path.insert(0, os.path.join(HERE, "..", "..", "eval"))
+from nav_metrics import nav_metrics                        # noqa: E402
 
 
 def load_cache(cache_dir, val_name):
@@ -70,6 +72,7 @@ def extract(pr):
 def evaluate(student, val, dev, n=24):
     student.eval()
     fid, gtm, sce = [], [], []
+    nav = {"near_absrel": [], "far_absrel": [], "col_range_mae": [], "obstacle_iou": []}
     for b in val[:n]:
         view = make_view([b], dev)
         sp = extract(student(view, memory_efficient_inference=True, minibatch_size=1)[0])
@@ -80,10 +83,16 @@ def evaluate(student, val, dev, n=24):
         fid.append(float(np.mean(np.abs(tz[v] - sz[v]) / tz[v])) if v.sum() else np.nan)
         gt = load_gt_depth(b["depth_path"], H, W)
         gtm.append(depth_metrics(gt, sz)["abs_rel"]); sce.append(scale_error(gt, sz))
+        nm = nav_metrics(tz, sz)  # nav fidelity vs teacher (what control consumes)
+        for k in nav:
+            if np.isfinite(nm[k]):
+                nav[k].append(nm[k])
     student.train()
-    return {"fid_absrel_vs_teacher": round(float(np.nanmean(fid)), 4),
-            "gt_absrel": round(float(np.nanmean(gtm)), 4),
-            "gt_scale_err": round(float(np.nanmean(sce)), 4)}
+    out = {"fid_absrel_vs_teacher": round(float(np.nanmean(fid)), 4),
+           "gt_absrel": round(float(np.nanmean(gtm)), 4),
+           "gt_scale_err": round(float(np.nanmean(sce)), 4)}
+    out.update({f"nav_{k}": round(float(np.mean(vs)), 4) for k, vs in nav.items() if vs})
+    return out
 
 
 def main():
