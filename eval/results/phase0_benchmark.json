@@ -1,0 +1,38 @@
+{
+  "description": "MERLIN Phase-0 benchmark on Jetson Orin Nano 8GB (MAXN_SUPER), mono RGB, single image. Teacher = facebook/map-anything-apache. fp32 weights + autocast(bf16).",
+  "hardware": {"board": "Jetson Orin Nano 8GB", "jetpack": "6.2 / L4T R36.4.4", "cuda": "12.6", "tensorrt": "10.3", "torch": "2.11.0", "power_mode": "MAXN_SUPER"},
+  "teacher": {
+    "params_M": 1228.5,
+    "precision": "fp32_weights_autocast_bf16",
+    "by_resolution": {
+      "252": {"fps": 5.0, "latency_ms_mean": 199, "peak_gpu_mem_gb": 2.58, "power_w_board": 14.4, "power_w_gpu_rail": 7.2},
+      "378": {"fps": 2.6, "latency_ms_mean": 383, "peak_gpu_mem_gb": 2.69, "power_w_board": 17.6, "power_w_gpu_rail": 9.2},
+      "518": {"fps": 1.6, "latency_ms_mean": 616, "peak_gpu_mem_gb": 2.88}
+    }
+  },
+  "student_untrained": {
+    "params_M": 230.3,
+    "breakdown_M": {"encoder_vitb": 86.6, "info_sharing_8L": 56.7, "heads": 24.8, "geometric_encoders_mono_deadweight": 62.2},
+    "note": "latency only; untrained so accuracy is meaningless until distilled. Geometric encoders are unused for mono RGB and prunable (~168M effective).",
+    "by_resolution": {
+      "252": {"fps": 8.0, "latency_ms_mean": 125, "peak_gpu_mem_gb": 1.07},
+      "378": {"fps": 5.1, "latency_ms_mean": 196, "peak_gpu_mem_gb": 1.24},
+      "518": {"fps": 3.1, "latency_ms_mean": 324, "peak_gpu_mem_gb": 1.49}
+    }
+  },
+  "teacher_int8_weight_only": {
+    "scheme": "torchao Int8WeightOnly, 176/184 linears, scale+pose heads protected",
+    "res": 252,
+    "fps": 2.8,
+    "latency_ms_mean": 360,
+    "peak_gpu_mem_gb": 1.44,
+    "fidelity_vs_fp32": {"abs_rel": 0.011, "delta1": 0.9999, "metric_scale_offset": 0.0049},
+    "note": "Near-lossless accuracy and -44% memory, but slower in PyTorch: no fused int8 GEMM on sm_87 (dequant to bf16). The int8 latency win requires a TensorRT int8 engine."
+  },
+  "conclusions": [
+    "C5 (>=5 FPS keyframe rate): MET. The 230M student hits 5.1 FPS at 378px and 8.0 FPS at 252px, untrained.",
+    "Latency win comes from the smaller student; memory + near-lossless accuracy win comes from INT8; INT8 latency win needs TensorRT.",
+    "Memory is comfortable (<3GB of 8GB) once loaded; uncompressed fp32 teacher (4.23GB) cannot load safely on the 8GB board (validates the compression thesis).",
+    "Next: distill student to teacher accuracy (needs real GPU-hours), build TensorRT INT8 engine, IMU scale+drift module."
+  ]
+}

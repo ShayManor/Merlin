@@ -216,3 +216,15 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# MERLIN: vendored upstream (pip-installed on each machine instead)
+merlin/third_party/
+# MERLIN: working docs + agent context (only README.md is committed)
+docs/
+claude.md
+.idea/
+# MERLIN: large artifacts
+*.pt
+*.onnx
+*.engine
+*.plan
