@@ -40,12 +40,12 @@ def scal3r_depth(model, images):
     """images: (B, S, 3, H, W) in [0,1]. Returns depth (B,S,1,H,W) and the raw
     aggregator tokens (for feature distillation if wanted)."""
     out = model.agg_regator(images)
-    output_dict, patch_start_idx = out if isinstance(out, tuple) else (out, 0)
-    idxs = model.agg_regator.intermediate_layer_idx
-    tokens_list = [output_dict[i] for i in idxs]
-    dpt = model.dpt_decoder(tokens_list, images, patch_start_idx)
-    depth = dpt[0] if isinstance(dpt, tuple) else dpt
-    return depth, tokens_list, patch_start_idx
+    tokens, patch_start_idx = out if isinstance(out, tuple) else (out, 0)
+    # DPTHead indexes aggregated_tokens_list[layer_idx] by ABSOLUTE layer index
+    # (e.g. 14/17/20/23), so pass the full tokens container (dict or list), NOT a sub-list.
+    dpt = model.dpt_decoder(tokens, images, patch_start_idx)
+    depth = dpt[0] if isinstance(dpt, (tuple, list)) else dpt
+    return depth, tokens, patch_start_idx
 
 
 if __name__ == "__main__":
