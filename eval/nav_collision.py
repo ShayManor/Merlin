@@ -39,7 +39,7 @@ def corridor_range(depth, col_frac=0.4, row_lo=0.4, min_d=0.1):
 
 
 @torch.no_grad()
-def eval_ckpt(ckpt, pairs, dev, res, brake_dist):
+def eval_ckpt(ckpt, pairs, dev, res, brake_dist, near_scale=False):
     from mapanything.utils.image import load_images
     ck = torch.load(ckpt, map_location="cpu", weights_only=False)
     m = build_student(size=ck.get("size", "base"), aat_depth=ck.get("aat_depth", 8), device="cpu")
@@ -51,11 +51,15 @@ def eval_ckpt(ckpt, pairs, dev, res, brake_dist):
         v = load_images([rp], resize_mode="square", size=s); v[0]["img"] = v[0]["img"].to(dev)
         sd = m(v, memory_efficient_inference=True, minibatch_size=1)[0]["pts3d_cam"][0, ..., 2].float().cpu().numpy()
         gt = load_gt_depth(dp, sd.shape[0], sd.shape[1])
-        # scale-align student to GT (mono is up-to-scale; the IMU module fixes absolute scale)
+        # scale-align student to GT. GLOBAL = scale from whole frame (what SLAM/IMU gives
+        # globally); NEAR = scale from the corridor region (best case for local scale).
         vmask = np.isfinite(gt) & np.isfinite(sd) & (gt > 0.1) & (gt < 10) & (sd > 0.05)
         if vmask.sum() < 200:
             continue
-        sd = sd * np.median(gt[vmask] / sd[vmask])
+        H, W = sd.shape; c0 = int(W * 0.3); c1 = int(W * 0.7); r0 = int(H * 0.4)
+        nm = np.zeros_like(vmask); nm[r0:, c0:c1] = True; nm &= vmask
+        scale = np.median(gt[nm] / sd[nm]) if (nm.sum() > 50 and near_scale) else np.median(gt[vmask] / sd[vmask])
+        sd = sd * scale
         g_rng, s_rng = corridor_range(gt), corridor_range(sd)
         g_obst = g_rng < brake_dist
         s_obst = s_rng < brake_dist
@@ -82,6 +86,7 @@ def main():
     ap.add_argument("--res", type=int, default=378)
     ap.add_argument("--n", type=int, default=150)
     ap.add_argument("--brake-dist", type=float, default=1.0)
+    ap.add_argument("--near-scale", action="store_true", help="scale-align from corridor (local) not global")
     ap.add_argument("--out", default="/workspace/ckpt/nav_collision.json")
     args = ap.parse_args()
     dev = "cuda"
@@ -91,7 +96,7 @@ def main():
     report = {}
     for c in args.ckpts:
         tag, path = c.split("=", 1)
-        report[tag] = eval_ckpt(path, pairs, dev, args.res, args.brake_dist)
+        report[tag] = eval_ckpt(path, pairs, dev, args.res, args.brake_dist, args.near_scale)
         print(f"  {tag}: {report[tag]}", flush=True)
     if "baseline" in report and "nav1" in report:
         b, m = report["baseline"], report["nav1"]
