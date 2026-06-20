@@ -15,6 +15,7 @@ import time
 
 import numpy as np
 import torch
+import torch.nn.functional as F
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
