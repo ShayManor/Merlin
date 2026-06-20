@@ -228,3 +228,4 @@ claude.md
 *.onnx
 *.engine
 *.plan
+updates/
