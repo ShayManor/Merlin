@@ -56,7 +56,20 @@ def nav_weight_map(teacher_depth, alpha, near_m=3.0):
     return (1 - alpha) + alpha * w
 
 
-def distill_loss(s, t, w_depth=1.0, w_scale=2.0, w_ray=0.5, nav_alpha=0.0, eps=1e-6):
+def colmin_loss(s_depth, t_depth, row_lo=0.4, eps=1e-6):
+    """M1-v2: log-L1 on the per-column MINIMUM depth over drivable (lower) rows -- the
+    nearest-obstacle range the local planner actually consumes (2D laser-scan proxy).
+    M1's near-field MEAN weighting improved mean near abs_rel but worsened this min-range
+    (and collisions); this targets the right statistic directly."""
+    sd = s_depth.squeeze(-1) if s_depth.dim() == 4 else s_depth
+    td = t_depth.squeeze(-1) if t_depth.dim() == 4 else t_depth
+    r0 = int(sd.shape[1] * row_lo)
+    s_min = sd[:, r0:, :].clamp_min(eps).amin(dim=1)       # (B, W) nearest range per column
+    t_min = td[:, r0:, :].clamp_min(eps).amin(dim=1)
+    return (s_min.log() - t_min.log()).abs().mean()
+
+
+def distill_loss(s, t, w_depth=1.0, w_scale=2.0, w_ray=0.5, nav_alpha=0.0, colmin_w=0.0, eps=1e-6):
     sd = s["depth"].clamp_min(eps).log()
     td = t["depth"].clamp_min(eps).log()
     wmap = nav_weight_map(t["depth"], nav_alpha)
@@ -65,6 +78,10 @@ def distill_loss(s, t, w_depth=1.0, w_scale=2.0, w_ray=0.5, nav_alpha=0.0, eps=1
     si = ((sd - td).flatten(1).var(dim=1) + 1e-8).sqrt().mean()  # per-sample SI
     loss = w_depth * (log_l1 + 0.5 * si)
     parts = {"depth_logL1": round(float(log_l1), 4), "depth_si": round(float(si), 4)}
+    if colmin_w > 0:
+        cm = colmin_loss(s["depth"], t["depth"])
+        loss = loss + colmin_w * cm
+        parts["colmin"] = round(float(cm), 4)
     if s.get("scale") is not None and t.get("scale") is not None:
         ls = (s["scale"].clamp_min(eps).log() - t["scale"].clamp_min(eps).log()).abs().mean()
         loss = loss + w_scale * ls

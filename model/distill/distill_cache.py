@@ -149,6 +149,7 @@ def main():
     ap.add_argument("--warmup", type=int, default=200)
     ap.add_argument("--lr", type=float, default=3e-4)
     ap.add_argument("--nav-weight", type=float, default=0.0)
+    ap.add_argument("--colmin", type=float, default=0.0, help="M1-v2: per-column-min (obstacle-range) loss weight")
     ap.add_argument("--encoder-lr-mult", type=float, default=1.0)
     ap.add_argument("--augment", action="store_true", help="h-flip + color jitter (anti-overfit)")
     ap.add_argument("--multi-res", default="", help="comma res list, e.g. 252,378,518 (M2 anytime)")
@@ -197,7 +198,7 @@ def main():
         if args.multi_exit:  # early-exit deep supervision: random AAT depth per batch
             student.info_sharing.depth = random.choice([int(k) for k in args.multi_exit.split(",")])
         sp = extract(student(view, memory_efficient_inference=True, minibatch_size=args.batch)[0])
-        loss, parts = distill_loss(sp, tgt, nav_alpha=args.nav_weight)
+        loss, parts = distill_loss(sp, tgt, nav_alpha=args.nav_weight, colmin_w=args.colmin)
         opt.zero_grad(set_to_none=True)
         loss.backward()
         torch.nn.utils.clip_grad_norm_(trainable, 1.0)
