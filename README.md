@@ -118,13 +118,22 @@ the navigation deadline (deadline from camera-motion velocity). Two axes evaluat
   is a small slice of total compute (encoder + DPT head dominate), so early-exit is flat on
   latency too. Frontier is flat on BOTH accuracy and latency, on BOTH A40 and Jetson.
 
-**Synthesis.** Both M2 axes are flat for this student: lower resolution is faster AND
-lower-error, and K=6 is ~as accurate as K=8 and faster. The distilled student SATURATES on
-indoor near-field depth. So M2's deadline-elastic benefit is limited (cheap operating
-points are already near-optimal), and this reinforces M1: the impactful lever is WHERE the
-saturated capacity is spent (M1 nav-aware allocation), not HOW MUCH (M2 compute/resolution).
-M1 is the primary methods contribution; M2 is characterized with an honest negative-ish
-result that motivates M1.
+**Dynamic test (latency-coupled staleness sim).** The proper M2 test replays a trajectory
+where the planner acts on perception delayed by the op-point latency (slow op point -> stale
+map). Result REFUTES M2: the slowest/most-accurate op point (518) gives the fewest collisions
+at every agent speed (x1: 0.097, x8: 0.127), beating the adaptive controller (x8: 0.187).
+Indoor latency-staleness (<=0.55m even at ~2.9 m/s) is negligible vs the accuracy gain, so
+trading accuracy for freshness backfires. Correct policy: run the most accurate model that
+fits a generous deadline, not adaptive switching.
+
+**Synthesis (both methods negative).** The distilled student saturates; uniform distillation
+sits near the navigation ceiling. M1 (reallocate the objective) does not beat uniform on
+collisions; M2 (anytime elasticity) does not beat the fixed best op point. The honest
+contribution here is a SYSTEM + a careful characterization: a deployable INT8 metric-recon
+node at 16-17 FPS on an 8GB Nano, plus the finding that task-aware distillation objectives
+and anytime elasticity do not improve indoor navigation for a saturated compact student
+(with the mechanisms: saturation, the mean-vs-nearest-range objective trap, and negligible
+indoor staleness). A closed-loop Habitat sim is the next step to confirm at scale.
 
 ### Scal3R (alternate backbone)
 Scal3R (CVPR'26 Highlight, VGGT + test-time training) is a harder distillation target: its
