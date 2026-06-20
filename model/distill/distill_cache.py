@@ -61,6 +61,33 @@ def targets(batch, dev):
                       if batch[0].get("scale") is not None else None)}
 
 
+def prep_batch(batch, dev, augment=False):
+    """Build (view, targets) with consistent per-sample augmentation. The cache
+    stores fixed preprocessed frames, so without aug the student memorizes (~12
+    epochs). H-flip is geometry-correct (flip img/depth/ray on W, negate ray-x);
+    color jitter is photometric-only. Targets stay aligned with the flipped image."""
+    imgs, depths, rays = [], [], []
+    for b in batch:
+        img = b["img"].float(); depth = b["depth"].float(); ray = b["ray"].float()
+        if augment:
+            if torch.rand(1).item() < 0.5:                      # horizontal flip
+                img = torch.flip(img, [2])
+                depth = torch.flip(depth, [1])
+                ray = torch.flip(ray, [1]).clone(); ray[..., 0] = -ray[..., 0]
+            # photometric (on the dinov2-normalized image): contrast/brightness/noise
+            img = img * (0.85 + 0.3 * torch.rand(1).item()) + (0.2 * torch.rand(1).item() - 0.1)
+            img = img + 0.02 * torch.randn_like(img)
+        imgs.append(img); depths.append(depth); rays.append(ray)
+    img = torch.stack(imgs, 0).to(dev)
+    B = img.shape[0]; H = W = img.shape[-1]
+    view = [dict(img=img, true_shape=np.array([[H, W]] * B, np.int32), idx=0,
+                 instance=[str(i) for i in range(B)], data_norm_type=["dinov2"] * B)]
+    tgt = {"depth": torch.stack(depths, 0).to(dev), "ray": torch.stack(rays, 0).to(dev),
+           "scale": (torch.stack([b["scale"].float() for b in batch], 0).to(dev)
+                     if batch[0].get("scale") is not None else None)}
+    return view, tgt
+
+
 def extract(pr):
     return {"depth": pr["depth_along_ray"].float(), "ray": pr["ray_directions"].float(),
             "scale": (pr.get("metric_scaling_factor").float()
@@ -73,7 +100,8 @@ def evaluate(student, val, dev, n=24):
     student.eval()
     fid, gtm, sce = [], [], []
     nav = {"near_absrel": [], "far_absrel": [], "col_range_mae": [], "obstacle_iou": []}
-    for b in val[:n]:
+    vstep = max(1, len(val) // n)  # stride across the whole held-out trajectory (not the easy first frames)
+    for b in val[::vstep][:n]:
         view = make_view([b], dev)
         sp = extract(student(view, memory_efficient_inference=True, minibatch_size=1)[0])
         sz = sp["ptscam"][0, ..., 2].float().cpu().numpy()
@@ -105,6 +133,7 @@ def main():
     ap.add_argument("--lr", type=float, default=3e-4)
     ap.add_argument("--nav-weight", type=float, default=0.0)
     ap.add_argument("--encoder-lr-mult", type=float, default=1.0)
+    ap.add_argument("--augment", action="store_true", help="h-flip + color jitter (anti-overfit)")
     ap.add_argument("--freeze-encoder", action="store_true")
     ap.add_argument("--eval-every", type=int, default=500)
     ap.add_argument("--out", default="/workspace/ckpt/student.pt")
@@ -144,8 +173,7 @@ def main():
     t0 = time.time()
     for step in range(1, args.steps + 1):
         batch = random.sample(train, args.batch)
-        view = make_view(batch, dev)
-        tgt = targets(batch, dev)
+        view, tgt = prep_batch(batch, dev, augment=args.augment)
         sp = extract(student(view, memory_efficient_inference=True, minibatch_size=args.batch)[0])
         loss, parts = distill_loss(sp, tgt, nav_alpha=args.nav_weight)
         opt.zero_grad(set_to_none=True)
