@@ -32,10 +32,16 @@ def load_scal3r(device="cuda", config=CONFIG):
     finally:
         os.chdir(cwd)
     sampler.eval()
-    # Keep TTT enabled: every attention block unconditionally writes to ttt_cache, so
-    # it must be non-None (comes from the initialized global_ttt_caches when TTT is on).
-    # We just need to pass ttt_order (see scal3r_depth). For per-frame independent
-    # targets this runs the model's actual (TTT-adapted) output, which is a valid teacher.
+    # Keep TTT enabled (blocks need a non-None ttt_cache), but turn OFF the per-frame
+    # muon weight UPDATE (default op0 has update=True -> slow adaptation every frame).
+    # For per-frame distillation targets we want the base VGGT depth, not sequence
+    # adaptation, and update=False makes the teacher ~Nx faster (no muon steps).
+    for op in getattr(sampler, "ttt_order", []) or []:
+        try:
+            op.update = False
+            op.apply = True
+        except Exception:
+            pass
     return sampler
 
 
