@@ -45,8 +45,12 @@ def nav_weight_map(teacher_depth, alpha, near_m=3.0):
         return torch.ones_like(teacher_depth)
     B, H, W, _ = teacher_depth.shape
     d = teacher_depth.clamp_min(0.1)
-    near = (near_m / (d + near_m)).clamp(0, 1)            # ~1 near, ->0 far
-    rows = torch.linspace(0.3, 1.0, H, device=d.device).view(1, H, 1, 1)
+    # Aggressive near-field focus: inverse-square in depth (~50x dynamic range from
+    # 0.5m to 5m) so gradients concentrate on the obstacle zone. A soft near_m/(d+near_m)
+    # weight on top of an already depth-relative log-L1 loss was too gentle to reallocate
+    # (M1 delta ~0.002). No (1-alpha) floor at alpha=1 -> pure nav weighting.
+    near = (1.0 / (d + 0.3)) ** 2                          # steep near emphasis
+    rows = torch.linspace(0.15, 1.0, H, device=d.device).view(1, H, 1, 1)  # drivable frustum
     w = near * rows.expand(B, H, W, 1)
     w = w / w.mean().clamp_min(1e-6)                       # keep loss scale stable
     return (1 - alpha) + alpha * w
