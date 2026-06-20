@@ -23,6 +23,28 @@ from mapanything.models import MapAnything  # noqa: E402
 from mapanything.utils.image import load_images  # noqa: E402
 
 
+def robust_save(payload, path, tries=4):
+    """Atomic, retrying save -- the network/overlay FS occasionally short-writes
+    torch.save's zip stream (inline_container pos mismatch). Write to a tmp file
+    then os.replace; retry on failure."""
+    import time as _t
+    for k in range(tries):
+        tmp = f"{path}.tmp{k}"
+        try:
+            torch.save(payload, tmp)
+            os.replace(tmp, path)
+            return True
+        except Exception as e:
+            try:
+                os.remove(tmp)
+            except OSError:
+                pass
+            if k == tries - 1:
+                print(f"  [save-fail] {os.path.basename(path)}: {e}", flush=True)
+                return False
+            _t.sleep(0.5)
+
+
 class FrameSet(torch.utils.data.Dataset):
     """Parallel image decode/resize (the precompute bottleneck) via DataLoader workers."""
     def __init__(self, frames, size):
@@ -86,9 +108,9 @@ def main():
         for i in range(B):
             if os.path.exists(out_paths[i]):
                 continue
-            torch.save({"img": imgh[i], "depth": dar[i], "ray": ray[i], "depth_z": dz[i],
-                        "scale": (msf[i] if msf is not None else None),
-                        "rgb": rps[i], "depth_path": dps[i]}, out_paths[i])
+            robust_save({"img": imgh[i], "depth": dar[i], "ray": ray[i], "depth_z": dz[i],
+                         "scale": (msf[i] if msf is not None else None),
+                         "rgb": rps[i], "depth_path": dps[i]}, out_paths[i])
         if done % (args.batch * 20) < args.batch:
             print(f"  {done}/{len(frames)}", flush=True)
     with open(os.path.join(cache, "index.json"), "w") as f:
