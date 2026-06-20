@@ -152,6 +152,7 @@ def main():
     ap.add_argument("--encoder-lr-mult", type=float, default=1.0)
     ap.add_argument("--augment", action="store_true", help="h-flip + color jitter (anti-overfit)")
     ap.add_argument("--multi-res", default="", help="comma res list, e.g. 252,378,518 (M2 anytime)")
+    ap.add_argument("--multi-exit", default="", help="comma AAT depths, e.g. 6,8 (M2 early-exit deep supervision)")
     ap.add_argument("--freeze-encoder", action="store_true")
     ap.add_argument("--eval-every", type=int, default=500)
     ap.add_argument("--out", default="/workspace/ckpt/student.pt")
@@ -193,6 +194,8 @@ def main():
         batch = random.sample(train, args.batch)
         mres = [int(r) for r in args.multi_res.split(",")] if args.multi_res else None
         view, tgt = prep_batch(batch, dev, augment=args.augment, multi_res=mres)
+        if args.multi_exit:  # early-exit deep supervision: random AAT depth per batch
+            student.info_sharing.depth = random.choice([int(k) for k in args.multi_exit.split(",")])
         sp = extract(student(view, memory_efficient_inference=True, minibatch_size=args.batch)[0])
         loss, parts = distill_loss(sp, tgt, nav_alpha=args.nav_weight)
         opt.zero_grad(set_to_none=True)
@@ -205,6 +208,8 @@ def main():
                   f"lr={sched.get_last_lr()[0]:.2e} {it:.2f}s/it", flush=True)
             log["steps"].append({"step": step, "loss": float(loss), **parts})
         if step % args.eval_every == 0 or step == args.steps:
+            if args.multi_exit:
+                student.info_sharing.depth = max(int(k) for k in args.multi_exit.split(","))  # eval at full depth
             ev = evaluate(student, val, dev); ev["step"] = step
             print(f"  >>> EVAL {ev}", flush=True)
             log["eval"].append(ev)
