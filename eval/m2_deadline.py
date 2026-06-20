@@ -99,9 +99,13 @@ def main():
         t = float(os.path.basename(rp)[:-4])
         vel = float(np.interp(t, tv[0], tv[1])) if tv else 0.1
         acc = {}
+        REF = 476  # common reference res so all operating points compare to the SAME GT
+        gt = load_gt_depth(dp, REF, REF)
         for res in RES_LIST:
             sd = run(student, rp, res, dev)
-            gt = load_gt_depth(dp, sd.shape[0], sd.shape[1])
+            if sd.shape != (REF, REF):  # upsample prediction to the common reference
+                import cv2
+                sd = cv2.resize(sd, (REF, REF), interpolation=cv2.INTER_LINEAR)
             acc[res] = scale_aligned_absrel(gt, sd)
         rows.append({"vel": vel, "acc": acc})
     print(f"[m2] {len(rows)} frames; mean vel {np.mean([r['vel'] for r in rows]):.3f} m/s", flush=True)
