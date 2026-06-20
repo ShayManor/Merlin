@@ -45,7 +45,11 @@ def load_scal3r(device="cuda", config=CONFIG):
 def scal3r_depth(model, images):
     """images: (B, S, 3, H, W) in [0,1]. Returns depth (B,S,1,H,W) and the raw
     aggregator tokens (for feature distillation if wanted)."""
-    out = model.agg_regator(images)
+    # Pass ttt_order even with TTT disabled: the attention blocks evaluate
+    # ttt_order[0] before the len(ttt_fastw) short-circuit, so None crashes. With
+    # global/frame TTT off, ttt_fastw is empty -> falls through to base attention.
+    ttt_order = getattr(model, "ttt_order", None)
+    out = model.agg_regator(images, ttt_order=ttt_order)
     tokens, patch_start_idx = out if isinstance(out, tuple) else (out, 0)
     # DPTHead indexes aggregated_tokens_list[layer_idx] by ABSOLUTE layer index
     # (e.g. 14/17/20/23), so pass the full tokens container (dict or list), NOT a sub-list.
