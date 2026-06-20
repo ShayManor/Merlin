@@ -97,8 +97,10 @@ the navigation deadline (deadline from camera-motion velocity). Two axes evaluat
   lower-error. Not a training artifact.
 - **Early-exit by AAT depth (K=6 vs K=8), fixed resolution**: the axis without the
   smoothness confound. Deep-supervision trained (random K per batch). Result: K=6 absrel
-  0.1372 (53 ms), K=8 absrel 0.1366 (58 ms). Clean-direction (more layers = lower error)
-  but FLAT (0.4% for +2 layers).
+  0.1372, K=8 absrel 0.1366 (clean-direction but 0.4% for +2 layers). On-device Jetson
+  latency: K=6 6.78 FPS (147.5 ms) vs K=8 6.67 FPS (149.9 ms), only 2.4 ms apart -- the AAT
+  is a small slice of total compute (encoder + DPT head dominate), so early-exit is flat on
+  latency too. Frontier is flat on BOTH accuracy and latency, on BOTH A40 and Jetson.
 
 **Synthesis.** Both M2 axes are flat for this student: lower resolution is faster AND
 lower-error, and K=6 is ~as accurate as K=8 and faster. The distilled student SATURATES on
