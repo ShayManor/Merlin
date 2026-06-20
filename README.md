@@ -82,10 +82,26 @@ Clean ablation (alpha=0 uniform vs alpha=1 nav-weighted, same arch/data/steps, m
 | col_range_mae (planner scan) | 0.208 | 0.201 | -3.2% |
 | obstacle_iou (free-space) | 0.702 | 0.716 | +2.1% |
 
-All navigation-relevant metrics improve; only far-field (control never consumes it)
-degrades. The mechanism strength matters: a soft near-weight gave a null delta (-0.002);
-an aggressive inverse-square near-weight gives -0.018 (7x). Dose-response: far_absrel is
-monotonic in alpha (0.171 -> 0.179 -> 0.184), a dose-dependent budget trade.
+These depth PROXIES improve under M1. But a navigation-safety eval (turn each depth into
+the local planner's forward-corridor go/stop decision, n=400, vs GT) tells a different and
+more honest story:
+
+| variant | collision rate (global scale) | collision (near/IMU scale) | corridor range-MAE |
+|---|---|---|---|
+| baseline (uniform) | 0.100 | 0.135 | 0.106 |
+| M1 (mean near-weight) | 0.143 | 0.152 | 0.113 |
+| M1-v2 (per-column-min loss) | 0.109 | 0.144 | 0.105 |
+
+M1 is WORSE on collisions under both scale assumptions. Diagnosis: collision avoidance
+depends on the nearest-obstacle RANGE (per-column minimum), but M1 optimizes the MEAN
+near-field depth; improving the mean worsens the min. M1-v2 targets the min directly and
+recovers to baseline (and marginally improves range-MAE) but does NOT beat uniform.
+
+Honest conclusion: neither task-aware variant beats uniform distillation on navigation
+safety. The compact student SATURATES (see M2), so uniform distillation already sits near
+the navigation-relevant ceiling; reallocating the objective hurts (M1) or ties (M1-v2). The
+real lever is not the distillation objective. A closed-loop navigation sim is the next step
+to confirm this dynamically; the depth-proxy "wins" do not transfer.
 
 ### M2: deadline-elastic anytime reconstruction
 The student exposes multiple operating points; a per-frame controller picks one to hold
