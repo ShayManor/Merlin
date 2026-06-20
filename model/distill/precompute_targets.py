@@ -12,7 +12,6 @@ import glob
 import json
 import os
 import sys
-from concurrent.futures import ThreadPoolExecutor
 
 import numpy as np
 import torch
@@ -61,18 +60,16 @@ def main():
         p.requires_grad_(False)
 
     loader = torch.utils.data.DataLoader(
-        FrameSet(frames, args.size), batch_size=args.batch, num_workers=12,
-        shuffle=False, drop_last=False, prefetch_factor=4, persistent_workers=False)
-    saver = ThreadPoolExecutor(max_workers=8)
-
-    def save_one(path, payload):
-        torch.save(payload, path)
+        FrameSet(frames, args.size), batch_size=args.batch, num_workers=8,
+        shuffle=False, drop_last=False, prefetch_factor=2, persistent_workers=False)
 
     done = 0
     for idxs, imgs, shapes, rps, dps in loader:
         out_paths = [os.path.join(cache, f"{int(j):05d}.pt") for j in idxs]
         done += len(idxs)
         if all(os.path.exists(o) for o in out_paths):
+            if done % (args.batch * 50) < args.batch:
+                print(f"  {done}/{len(frames)} (skip)", flush=True)
             continue
         img = imgs.to(dev, non_blocking=True)  # (B,3,H,W)
         B = img.shape[0]
@@ -89,13 +86,11 @@ def main():
         for i in range(B):
             if os.path.exists(out_paths[i]):
                 continue
-            saver.submit(save_one, out_paths[i], {
-                "img": imgh[i], "depth": dar[i], "ray": ray[i], "depth_z": dz[i],
-                "scale": (msf[i] if msf is not None else None),
-                "rgb": rps[i], "depth_path": dps[i]})
+            torch.save({"img": imgh[i], "depth": dar[i], "ray": ray[i], "depth_z": dz[i],
+                        "scale": (msf[i] if msf is not None else None),
+                        "rgb": rps[i], "depth_path": dps[i]}, out_paths[i])
         if done % (args.batch * 20) < args.batch:
             print(f"  {done}/{len(frames)}", flush=True)
-    saver.shutdown(wait=True)
     with open(os.path.join(cache, "index.json"), "w") as f:
         json.dump(index, f)
     print(f"=== PRECOMPUTE_DONE {done} frames at sz{args.size} ===", flush=True)
