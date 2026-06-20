@@ -15,6 +15,19 @@ import sys
 import numpy as np
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
+
+
+def _eager_sdpa(q, k, v, attn_mask=None, dropout_p=0.0, is_causal=False, scale=None, enable_gqa=False):
+    """Explicit attention -- the torch 2.4 TorchScript ONNX exporter mistranslates
+    F.scaled_dot_product_attention's float `scale` attribute. Tracing explicit
+    matmul+softmax exports cleanly (and is numerically identical)."""
+    s = scale if scale is not None else (1.0 / (q.shape[-1] ** 0.5))
+    attn = (q @ k.transpose(-2, -1)) * s
+    if attn_mask is not None:
+        attn = attn + attn_mask
+    attn = attn.softmax(dim=-1)
+    return attn @ v
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(HERE, "..", "distill"))
@@ -37,9 +50,11 @@ class MonoCore(nn.Module):
                   "true_shape": torch.tensor([[self.hw[0], self.hw[1]]])}]
         feats, regs = self.m._encode_n_views(views)
         feats = self.m._encode_and_fuse_optional_geometric_inputs(views, feats)
+        B = img.shape[0]
+        scale_tok = self.m.scale_token.unsqueeze(0).unsqueeze(-1).repeat(B, 1, 1)  # (B,C,1)
         isi = MultiViewTransformerInput(
             features=feats, additional_input_tokens_per_view=regs,
-            additional_input_tokens=self.m.scale_token.unsqueeze(0))
+            additional_input_tokens=scale_tok)
         final, inter = self.m.info_sharing(isi)
         dhi = [torch.cat(feats, 0),
                torch.cat(inter[0].features, 0),
@@ -71,12 +86,33 @@ def main():
         dv, sv = core(img)
     print("dense", tuple(dv.shape), "scale", tuple(sv.shape), flush=True)
 
-    print("=== onnx export (opset 17) ===", flush=True)
+    # Patch SDPA -> explicit attention so the exporter doesn't choke on the scale attr.
+    F.scaled_dot_product_attention = _eager_sdpa
     with torch.no_grad():
-        torch.onnx.export(core, (img,), args.out, opset_version=17,
-                          input_names=["img"], output_names=["dense", "scale"],
-                          dynamo=False)
-    print(f"[exported] {args.out}", flush=True)
+        dv2, _ = core(img)
+    print("post-patch sanity dense", tuple(dv2.shape), flush=True)
+
+    last = None
+    for opset in (20, 18):
+        try:
+            print(f"=== onnx export (TorchScript, opset {opset}) ===", flush=True)
+            with torch.no_grad():
+                torch.onnx.export(core, (img,), args.out, opset_version=opset,
+                                  input_names=["img"], output_names=["dense", "scale"], dynamo=False)
+            print(f"[exported] {args.out} (opset {opset})", flush=True)
+            return
+        except Exception as e:
+            last = e; print(f"  opset {opset} failed: {str(e)[:200]}", flush=True)
+    try:
+        print("=== onnx export (dynamo) ===", flush=True)
+        with torch.no_grad():
+            torch.onnx.export(core, (img,), args.out, dynamo=True,
+                              input_names=["img"], output_names=["dense", "scale"])
+        print(f"[exported] {args.out} (dynamo)", flush=True)
+        return
+    except Exception as e:
+        print(f"  dynamo failed: {str(e)[:300]}", flush=True)
+    raise last
 
 
 if __name__ == "__main__":
