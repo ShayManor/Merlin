@@ -61,14 +61,30 @@ def targets(batch, dev):
                       if batch[0].get("scale") is not None else None)}
 
 
-def prep_batch(batch, dev, augment=False):
+def prep_batch(batch, dev, augment=False, multi_res=None):
     """Build (view, targets) with consistent per-sample augmentation. The cache
     stores fixed preprocessed frames, so without aug the student memorizes (~12
     epochs). H-flip is geometry-correct (flip img/depth/ray on W, negate ray-x);
-    color jitter is photometric-only. Targets stay aligned with the flipped image."""
+    color jitter is photometric-only. Targets stay aligned with the flipped image.
+
+    multi_res: if a list of resolutions, pick one per batch and re-decode imgs +
+    resize targets to it (trains the student to be accurate at all operating points
+    -> a genuine accuracy/latency frontier for the M2 deadline-elastic controller)."""
+    R = None
+    if multi_res:
+        R = int(random.choice(multi_res)); R = (R // 14) * 14
     imgs, depths, rays = [], [], []
     for b in batch:
-        img = b["img"].float(); depth = b["depth"].float(); ray = b["ray"].float()
+        if R is not None and R != int(b["img"].shape[-1]):
+            from data import make_views  # re-decode raw image at R (dinov2-normalized)
+            img = make_views([b["rgb"]], R, "cpu")[0]["img"][0].float()
+            depth = F.interpolate(b["depth"].float().permute(2, 0, 1)[None], (R, R),
+                                  mode="nearest")[0].permute(1, 2, 0)
+            ray = F.interpolate(b["ray"].float().permute(2, 0, 1)[None], (R, R),
+                                mode="bilinear", align_corners=False)[0].permute(1, 2, 0)
+            ray = ray / ray.norm(dim=-1, keepdim=True).clamp_min(1e-6)
+        else:
+            img = b["img"].float(); depth = b["depth"].float(); ray = b["ray"].float()
         if augment:
             if torch.rand(1).item() < 0.5:                      # horizontal flip
                 img = torch.flip(img, [2])
@@ -134,6 +150,7 @@ def main():
     ap.add_argument("--nav-weight", type=float, default=0.0)
     ap.add_argument("--encoder-lr-mult", type=float, default=1.0)
     ap.add_argument("--augment", action="store_true", help="h-flip + color jitter (anti-overfit)")
+    ap.add_argument("--multi-res", default="", help="comma res list, e.g. 252,378,518 (M2 anytime)")
     ap.add_argument("--freeze-encoder", action="store_true")
     ap.add_argument("--eval-every", type=int, default=500)
     ap.add_argument("--out", default="/workspace/ckpt/student.pt")
@@ -173,7 +190,8 @@ def main():
     t0 = time.time()
     for step in range(1, args.steps + 1):
         batch = random.sample(train, args.batch)
-        view, tgt = prep_batch(batch, dev, augment=args.augment)
+        mres = [int(r) for r in args.multi_res.split(",")] if args.multi_res else None
+        view, tgt = prep_batch(batch, dev, augment=args.augment, multi_res=mres)
         sp = extract(student(view, memory_efficient_inference=True, minibatch_size=args.batch)[0])
         loss, parts = distill_loss(sp, tgt, nav_alpha=args.nav_weight)
         opt.zero_grad(set_to_none=True)
