@@ -95,11 +95,18 @@ the navigation deadline (deadline from camera-motion velocity). Two axes evaluat
   experimentally (incl. a multi-res-trained student) that this is intrinsic: scale-aligned
   depth error favors coarser/smoother predictions, so lower res is both faster and
   lower-error. Not a training artifact.
-- **Early-exit by AAT depth (K=6 vs K=8), fixed resolution**: the correct axis. Same
-  resolution removes the smoothness confound; more transformer layers = genuine
-  refinement. Validated that truncating to K=6 yields valid depth; deep-supervision
-  training (random K per batch) makes the head accurate at each operating point. (Run in
-  progress at time of writing.)
+- **Early-exit by AAT depth (K=6 vs K=8), fixed resolution**: the axis without the
+  smoothness confound. Deep-supervision trained (random K per batch). Result: K=6 absrel
+  0.1372 (53 ms), K=8 absrel 0.1366 (58 ms). Clean-direction (more layers = lower error)
+  but FLAT (0.4% for +2 layers).
+
+**Synthesis.** Both M2 axes are flat for this student: lower resolution is faster AND
+lower-error, and K=6 is ~as accurate as K=8 and faster. The distilled student SATURATES on
+indoor near-field depth. So M2's deadline-elastic benefit is limited (cheap operating
+points are already near-optimal), and this reinforces M1: the impactful lever is WHERE the
+saturated capacity is spent (M1 nav-aware allocation), not HOW MUCH (M2 compute/resolution).
+M1 is the primary methods contribution; M2 is characterized with an honest negative-ish
+result that motivates M1.
 
 ### Scal3R (alternate backbone)
 Scal3R (CVPR'26 Highlight, VGGT + test-time training) is a harder distillation target: its
