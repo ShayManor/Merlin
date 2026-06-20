@@ -104,6 +104,7 @@ def main():
     ap.add_argument("--warmup", type=int, default=200)
     ap.add_argument("--lr", type=float, default=3e-4)
     ap.add_argument("--nav-weight", type=float, default=0.0)
+    ap.add_argument("--encoder-lr-mult", type=float, default=1.0)
     ap.add_argument("--freeze-encoder", action="store_true")
     ap.add_argument("--eval-every", type=int, default=500)
     ap.add_argument("--out", default="/workspace/ckpt/student.pt")
@@ -125,8 +126,16 @@ def main():
             if n.startswith("encoder."):
                 p.requires_grad_(False)
     student.train()
-    trainable = [p for p in student.parameters() if p.requires_grad]
-    opt = torch.optim.AdamW(trainable, lr=args.lr, weight_decay=1e-4, betas=(0.9, 0.95))
+    # Optional: lower LR for the pretrained DINOv2 encoder (distillation stability).
+    enc = [p for n, p in student.named_parameters() if p.requires_grad and n.startswith("encoder.")]
+    rest = [p for n, p in student.named_parameters() if p.requires_grad and not n.startswith("encoder.")]
+    trainable = enc + rest
+    if args.encoder_lr_mult != 1.0:
+        groups = [{"params": enc, "lr": args.lr * args.encoder_lr_mult}, {"params": rest, "lr": args.lr}]
+        print(f"[opt] encoder lr x{args.encoder_lr_mult}", flush=True)
+    else:
+        groups = [{"params": trainable, "lr": args.lr}]
+    opt = torch.optim.AdamW(groups, lr=args.lr, weight_decay=1e-4, betas=(0.9, 0.95))
     sched = torch.optim.lr_scheduler.LambdaLR(
         opt, lambda s: min(1.0, s / max(1, args.warmup)) *
         (0.5 * (1 + np.cos(np.pi * min(1.0, max(0, s - args.warmup) / max(1, args.steps - args.warmup))))))
