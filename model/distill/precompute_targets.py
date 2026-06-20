@@ -108,8 +108,11 @@ def main():
         for i in range(B):
             if os.path.exists(out_paths[i]):
                 continue
-            robust_save({"img": imgh[i], "depth": dar[i], "ray": ray[i], "depth_z": dz[i],
-                         "scale": (msf[i] if msf is not None else None),
+            # .clone() each slice -- a bare view shares the whole batch storage, so
+            # torch.save would serialize the entire (B,...) tensor per frame (B x bloat).
+            robust_save({"img": imgh[i].clone(), "depth": dar[i].clone(),
+                         "ray": ray[i].clone(), "depth_z": dz[i].clone(),
+                         "scale": (msf[i].clone() if msf is not None else None),
                          "rgb": rps[i], "depth_path": dps[i]}, out_paths[i])
         if done % (args.batch * 20) < args.batch:
             print(f"  {done}/{len(frames)}", flush=True)
