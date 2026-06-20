@@ -32,12 +32,10 @@ def load_scal3r(device="cuda", config=CONFIG):
     finally:
         os.chdir(cwd)
     sampler.eval()
-    # Disable test-time training for per-frame distillation targets: TTT adapts over a
-    # sequence; the base VGGT forward gives clean per-frame depth and avoids the TTT
-    # code path (which needs a ttt_order / sequence state we don't have for single frames).
-    if hasattr(sampler, "agg_regator"):
-        sampler.agg_regator.global_use_ttt = False
-        sampler.agg_regator.frame_use_ttt = False
+    # Keep TTT enabled: every attention block unconditionally writes to ttt_cache, so
+    # it must be non-None (comes from the initialized global_ttt_caches when TTT is on).
+    # We just need to pass ttt_order (see scal3r_depth). For per-frame independent
+    # targets this runs the model's actual (TTT-adapted) output, which is a valid teacher.
     return sampler
 
 
