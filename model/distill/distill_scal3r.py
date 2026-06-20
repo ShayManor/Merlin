@@ -92,6 +92,7 @@ def main():
     ap.add_argument("--eval-every", type=int, default=500)
     ap.add_argument("--stride", type=int, default=3)
     ap.add_argument("--out", default="/workspace/ckpt/student_scal3r.pt")
+    ap.add_argument("--init", default="", help="warm-start student state_dict (avoids cold-start degenerate depth)")
     args = ap.parse_args()
     os.makedirs(os.path.dirname(args.out), exist_ok=True)
     dev = "cuda"
@@ -102,6 +103,9 @@ def main():
     teacher = load_scal3r(dev)
     print("=== building student ===", flush=True)
     student = build_student(size="base", aat_depth=8, device=dev)
+    if args.init and os.path.exists(args.init):
+        student.load_state_dict(torch.load(args.init, map_location=dev, weights_only=False)["state_dict"])
+        print(f"[init] warm-started from {args.init}", flush=True)
     print("[student]", param_report(student), flush=True)
     student.train()
 
