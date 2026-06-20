@@ -85,18 +85,21 @@ def precompute(ckpt, pairs, dev):
 
 
 def simulate(rows, ts, xs, speed_mult, brake=1.0):
-    """For each control tick, planner uses stale perception; collision if stale-clear but true-blocked."""
-    # per-frame speed from trajectory (scaled); staleness in seconds -> stale frame index
+    """For each control tick, planner uses stale perception; collision if stale-clear but
+    true-blocked. Staleness is selected by DISTANCE travelled during the op-point latency
+    (v*latency), so a faster robot acts on a belief from further back -> genuinely more stale."""
     frame_t = np.array([r["t"] for r in rows])
-    # interpolate agent speed at each frame time
+    # cumulative real path distance at each FRAME time (interp the trajectory's cumdist)
+    traj_cum = np.concatenate([[0], np.cumsum(np.linalg.norm(np.diff(xs, axis=0), axis=1))])
+    frame_cum = np.interp(frame_t, ts, traj_cum)
     spd = np.zeros(len(ts)); spd[1:] = np.linalg.norm(np.diff(xs, axis=0), axis=1) / np.clip(np.diff(ts), 1e-3, None)
     def speed_at(t):
         return float(np.interp(t, ts, spd)) * speed_mult
 
-    def stale_frame(i, lat):
-        # frame whose timestamp is ~ t_i - lat (the perception the planner is acting on)
-        tgt = frame_t[i] - lat
-        j = int(np.searchsorted(frame_t, tgt))
+    def stale_frame(i, lat, v):
+        # the belief was captured when the robot was (v*lat) meters back along the path
+        tgt_cum = frame_cum[i] - v * lat
+        j = int(np.searchsorted(frame_cum, tgt_cum))
         return max(0, min(len(rows) - 1, j))
 
     def run(policy):
@@ -107,13 +110,11 @@ def simulate(rows, ts, xs, speed_mult, brake=1.0):
                 continue
             mov += 1
             op = policy(v)
-            j = stale_frame(i, LATENCY_S[op])
-            perceived = rows[j]["s_rng"][op]  # stale belief about the corridor
+            j = stale_frame(i, LATENCY_S[op], v)
+            perceived = rows[j]["s_rng"][op]  # stale belief about the corridor (from v*lat back)
             true_now = r["g_rng"]             # actual obstacle range now (GT)
-            # extra staleness penalty: agent advanced v*lat meters since perception
-            advanced = v * LATENCY_S[op]
-            if perceived - advanced >= brake and true_now < brake:
-                coll += 1                     # believed clear (even accounting for closing), actually blocked
+            if perceived >= brake and true_now < brake:
+                coll += 1                     # believed clear, actually blocked -> collision
         return coll / max(1, mov)
 
     pols = {f"fixed_{res}": (lambda v, res=res: res) for res in RES_LIST}
