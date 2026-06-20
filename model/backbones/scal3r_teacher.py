@@ -32,6 +32,12 @@ def load_scal3r(device="cuda", config=CONFIG):
     finally:
         os.chdir(cwd)
     sampler.eval()
+    # Disable test-time training for per-frame distillation targets: TTT adapts over a
+    # sequence; the base VGGT forward gives clean per-frame depth and avoids the TTT
+    # code path (which needs a ttt_order / sequence state we don't have for single frames).
+    if hasattr(sampler, "agg_regator"):
+        sampler.agg_regator.global_use_ttt = False
+        sampler.agg_regator.frame_use_ttt = False
     return sampler
 
 
