@@ -46,7 +46,9 @@ perception fidelity. See the per-claim sections below for the evidence and hones
     held-out trajectory; the robust strided eval was 0.34. Root cause: the fixed-image cache
     had no augmentation, so ~12 epochs memorized the frames. Fixed with geometry-correct
     augmentation (h-flip with ray-x negation + photometric jitter) + diverse data + honest
-    strided eval -> **0.34 -> 0.21** held-out, train/test gap 7x -> 2.7x.
+    strided eval -> **0.34 -> 0.21** held-out, train/test gap 7x -> 2.7x. A later run with a
+    lower encoder LR (0.3x) + a longer 12k-step schedule further improved this to **0.178**
+    (the scorecard number); the residual is the 230M-vs-1.23B capacity gap.
   - The residual ~21% is largely the 230M-vs-1.23B capacity gap imposed by the Nano. This
     is MERLIN's core tension and the motivation for M1.
 
