@@ -51,13 +51,27 @@ def main():
     ap.add_argument("--frames", type=int, default=8)
     ap.add_argument("--stride", type=int, default=4)
     ap.add_argument("--accel-scale", type=float, default=1.0, help="per-device accel scale-factor calibration")
+    ap.add_argument("--rot-noise-deg", type=float, default=0.0, help="inject rotation noise (deg) to test a realistic VO front end")
+    ap.add_argument("--seed", type=int, default=0)
     args = ap.parse_args()
+    rng = np.random.RandomState(args.seed)
     A = np.array([[float(x) for x in l.split()] for l in open(args.seq+"/accelerometer.txt") if not l.startswith("#")])
     at, av = A[:, 0], A[:, 1:4] * args.accel_scale
     G = np.array([[float(x) for x in l.split()] for l in open(args.seq+"/groundtruth.txt") if not l.startswith("#")])
     gt_t = G[:, 0]
+    # per-frame rotation perturbation (simulates a realistic VO front end's rotation error)
+    sig = np.deg2rad(args.rot_noise_deg)
+    perts = []
+    for _ in range(len(G)):
+        if sig <= 0:
+            perts.append(np.eye(3)); continue
+        ax = rng.randn(3); ax /= np.linalg.norm(ax)+1e-9; ang = rng.randn()*sig
+        K = np.array([[0,-ax[2],ax[1]],[ax[2],0,-ax[0]],[-ax[1],ax[0],0]])
+        perts.append(np.eye(3) + np.sin(ang)*K + (1-np.cos(ang))*K@K)
+    perts = np.array(perts)
     def gpos(t): return G[np.argmin(np.abs(gt_t-t)), 1:4]
-    def gR(t): return quat_to_R(G[np.argmin(np.abs(gt_t-t)), 4:8])
+    def gR(t):
+        i = np.argmin(np.abs(gt_t-t)); return perts[i] @ quat_to_R(G[i, 4:8])
 
     # 1) calibrate accel->camera extrinsic R_ac via gravity-constant-in-world (low-motion samples)
     lm = np.abs(np.linalg.norm(av, axis=1) - 9.81) < 0.4
