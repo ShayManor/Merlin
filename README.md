@@ -154,8 +154,16 @@ latency so a slow map goes stale) tested M1 and M2 in actual navigation. Code in
 - **SWaP-C payoff:** since resolution does not buy success, success-per-watt is maximized by the
   CHEAPEST op point — **run fixed_252 always** (~2.7x less energy/m, same success). The honest
   paper framing: how much perception fidelity does reactive indoor nav need? The student already
-  clears it; the lever is the planner/mapping stack. (Caveats: single reactive planner, navmesh
-  global guide so collisions are rare by construction, per-episode GT scale align as IMU stand-in.)
+  clears it; the lever is the planner/mapping stack. (Caveats: per-episode GT scale align as IMU
+  stand-in.)
+- **Robust to a smarter planner (addresses the obvious objection):** a second planner -- a GLOBAL
+  occupancy-mapping + A* planner that plans on the PERCEIVED depth map (no navmesh guide,
+  `eval/sim/map_planner.py`) -- gives the SAME verdict. 3 apartments, 45 paired episodes: student
+  baseline 0.705, M1 0.667 (CIs overlap -> M1 still null), perfect-depth oracle 0.378 (still
+  worst). So neither finding is a reactive-planner artifact: M1 is null and perfect depth HURTS
+  under both a reactive and a map-building planner. Mechanism: perfect depth over-clutters the
+  occupancy grid with fine/thin obstacles and stalls A*; the student's smoother depth yields a
+  cleaner, more navigable map (0 collisions everywhere -- the navmesh handles physical avoidance).
 
 ### Architecture finding: decouple pose from depth
 A visual-inertial metric-scale estimator (TUM accelerometer + the student's own camera poses)
