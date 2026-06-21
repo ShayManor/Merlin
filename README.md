@@ -168,6 +168,14 @@ latency so a slow map goes stale) tested M1 and M2 in actual navigation. Code in
   the oracle only modestly (0.378 -> 0.433) and the student still wins (0.700), so over-cluttering
   is part of the mechanism but not all of it -- perfect depth is genuinely worse, not a single
   threshold artifact.
+- **No-slide limitation (honest):** the "collisions rare by construction" caveat (the navmesh
+  slides the robot along obstacles) was probed with a no-slide mode (`try_step_no_sliding`, robot
+  stops at obstacles). It is uninformative here: with no sliding, all arms -- including the
+  perfect-depth oracle -- floor near 0 success, because the reactive/mapping planners have no
+  stuck-recovery (back-up + replan). A recovery-capable planner is needed to test perception
+  under real collisions; this is future work, and the sliding collision model is retained for the
+  results above. So the safety question (does perception fidelity reduce collisions when crashes
+  are real?) remains open and is the natural next planner-side study.
 
 ### Architecture finding: decouple pose from depth
 A visual-inertial metric-scale estimator (TUM accelerometer + the student's own camera poses)
