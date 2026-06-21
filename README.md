@@ -164,6 +164,10 @@ latency so a slow map goes stale) tested M1 and M2 in actual navigation. Code in
   under both a reactive and a map-building planner. Mechanism: perfect depth over-clutters the
   occupancy grid with fine/thin obstacles and stalls A*; the student's smoother depth yields a
   cleaner, more navigable map (0 collisions everywhere -- the navmesh handles physical avoidance).
+  Robust to the occupancy threshold: a stricter grid (3 hits to mark a cell occupied vs 1) helps
+  the oracle only modestly (0.378 -> 0.433) and the student still wins (0.700), so over-cluttering
+  is part of the mechanism but not all of it -- perfect depth is genuinely worse, not a single
+  threshold artifact.
 
 ### Architecture finding: decouple pose from depth
 A visual-inertial metric-scale estimator (TUM accelerometer + the student's own camera poses)
