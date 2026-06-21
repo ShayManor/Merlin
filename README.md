@@ -21,9 +21,18 @@ This README summarizes the implementation and results to date.
 
 | Claim | Target | Result | Status |
 |---|---|---|---|
-| C1 distill fidelity | within 10-15% of teacher | 0.21 abs_rel vs teacher (held-out) | close (see note) |
-| C2 metric scale | <5% (mono+IMU) | scale-aligned shape error ~5%; raw mono scale off ~30% (IMU's job) | on track |
-| C5 real-time | >=5 FPS, ~10-15 W | 6.8 FPS @378 bf16 / ~16-17 FPS TRT-INT8, 8.5 W GPU rail, 0.68 GB | MET |
+| C1 distill fidelity | within 10-15% of teacher | **0.178** abs_rel vs teacher held-out (0.21 -> 0.178 via encoder-lr-mult + longer) | close; capacity-bound |
+| C2 metric scale | <5% (mono+IMU) | **0.4-1.3%** via decoupled VI-scale + per-device calib (held-out); needs a production VIO front end (lightweight VO insufficient) | MET (decoupled) |
+| C3 drift | <1-2% over 100 m, no backend | mechanism validated in sim: 9-axis IMU bounds drift to ~1.5-2% (= C2 scale floor) -- BUT needs a trusted yaw reference (indoor-mag risk); rover-pending | characterized |
+| C4 closed-loop nav | >=80-90% success, N>=6 scenes | sim: distilled student navigates ~75% from mono, 0 collisions (5 ReplicaCAD apts); real rover pending | partial (sim) |
+| C5 real-time | >=5 FPS, ~10-15 W | **16-17 FPS** TRT-INT8 @378 (6.8 bf16), 8.5 W GPU rail, 0.68 GB | MET |
+| M1 nav-aware allocation | improve navigation | depth proxies improve but NAV is null/worse across two planners; perception trades success for safety | honest negative |
+| M2 deadline-elastic | hold deadline, beat fixed | null: student saturates; staleness absorbed; run the cheapest op point | honest negative |
+
+Headline: the system works (deployable mono metric-depth edge node + decoupled metric scale);
+the "smart methods" (M1/M2) do not improve navigation -- the distilled student already saturates
+the perception needs of reactive indoor nav, so the lever is the planner/mapping stack, not
+perception fidelity. See the per-claim sections below for the evidence and honest caveats.
 
 ### Pipeline (MapAnything backbone)
 - **Teacher**: `facebook/map-anything-apache`, 1.23B params (DINOv2 ViT-G + 16-layer
