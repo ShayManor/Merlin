@@ -147,10 +147,14 @@ end (classical VO or tight IMU integration), with the student serving as the den
 This is validated, not just hypothesized: re-running the SAME linear VI scale solver with
 GT-quality poses (stand-in for a classical VO front end) recovers metric scale to **5.5-12.6%
 across four TUM sequences** (median ~6-8%), with clean gravity calibration (|g| 9.69-9.79).
-The residual is a consistent underestimate (characteristic MEMS dynamic-motion attenuation),
-correctable to <5% with a per-device scale-factor calibration. So the metric-scale claim (C2)
-is achievable -- but through the DECOUPLED design (student dense depth + VO/IMU pose+scale),
-not the single-model premise. This is the positive contribution alongside the deployable node.
+The residual is a consistent underestimate (characteristic MEMS dynamic-motion attenuation).
+A one-time per-device accelerometer scale-factor calibration (k fit on one sequence) closes
+it on HELD-OUT sequences: calibrating on freiburg1_xyz and applying to freiburg1_room and
+_desk gives **1.3% and 0.4%** scale error (freiburg2_desk, own-device, 0.8%). **C2 (<5%
+metric scale) is MET** through the DECOUPLED design (student dense depth + VO/IMU pose+scale),
+not the single-model premise. Caveat: this uses GT-quality rotations as a stand-in for the VO
+front end; validating with ORB-SLAM-grade rotations is the next step. This is the positive
+contribution alongside the deployable node.
 
 ### Scal3R (alternate backbone)
 Scal3R (CVPR'26 Highlight, VGGT + test-time training) is a harder distillation target: its
