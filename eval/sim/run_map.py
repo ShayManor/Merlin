@@ -93,10 +93,23 @@ def main():
     args = ap.parse_args()
     os.makedirs(args.out, exist_ok=True)
 
-    # spawn the Habitat server (EGL/GPU) FIRST, then init the student CUDA context, so the
-    # render context is established before torch grabs the GPU (avoids EGL-render stalls).
-    server = spawn_server(args.port, args.conda_sh, args.env_name)
-    client = SimClient(args.port, timeout=120.0)
+    # respawnable server: habitat-sim sporadically dies across many episodes; restart it on
+    # any RPC failure (on a fresh port) and skip just the offending episode -- otherwise a
+    # single crash kills every subsequent episode against a dead server.
+    state = {"server": spawn_server(args.port, args.conda_sh, args.env_name),
+             "client": None, "port": args.port}
+    state["client"] = SimClient(state["port"], timeout=120.0)
+
+    def restart():
+        try: state["client"].close()
+        except Exception: pass
+        try: state["server"].terminate()
+        except Exception: pass
+        state["port"] += 1
+        print(f"[restart server -> port {state['port']}]", flush=True)
+        state["server"] = spawn_server(state["port"], args.conda_sh, args.env_name)
+        state["client"] = SimClient(state["port"], timeout=120.0)
+
     lp = LocalPlanner(max_speed=0.5, brake_dist=0.30)
 
     arms = [("gt", None)]
@@ -112,9 +125,9 @@ def main():
         got = 0; seed = 0
         while got < args.episodes and seed < args.episodes * 25:
             try:
-                ep = client.sample(scene, args.min_geo, args.max_geo, seed, args.dataset)
-            except Exception as e:
-                ep = None
+                ep = state["client"].sample(scene, args.min_geo, args.max_geo, seed, args.dataset)
+            except Exception:
+                restart(); ep = None
             seed += 1
             if ep:
                 ep["dataset"] = args.dataset; eps.append(ep); got += 1
@@ -125,16 +138,17 @@ def main():
         succ = []
         for ep in eps:
             try:
-                r = run_episode_map(client, perc, lp, ep)
+                r = run_episode_map(state["client"], perc, lp, ep)
             except Exception as e:
-                print(f"[ep fail {tag}: {repr(e)[:80]}]", flush=True); continue
+                print(f"[ep fail {tag}: {repr(e)[:80]}; restarting]", flush=True)
+                restart(); continue
             r["arm"] = tag; rows.append(r); succ.append(r["success"])
         m, lo, hi = boot_ci(succ)
         print(f"  {tag}: success {m:.3f} [{lo:.3f},{hi:.3f}] n={len(succ)} "
-              f"collisions/m {np.mean([x['collisions_per_m'] for x in rows if x['arm']==tag]):.3f}", flush=True)
-    json.dump(rows, open(os.path.join(args.out, "map_rows.json"), "w"), indent=2)
+              f"collisions/m {np.mean([x['collisions_per_m'] for x in rows if x['arm']==tag] or [0]):.3f}", flush=True)
+        json.dump(rows, open(os.path.join(args.out, "map_rows.json"), "w"), indent=2)
     print("=== RUN_MAP_DONE ===", flush=True)
-    try: client.close(); server.terminate()
+    try: state["client"].close(); state["server"].terminate()
     except Exception: pass
 
 
