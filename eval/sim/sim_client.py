@@ -43,9 +43,10 @@ class SimClient:
         return self._rpc({"cmd": "sample", "scene": scene, "min_geo": min_geo,
                           "max_geo": max_geo, "seed": seed, "dataset": dataset})
 
-    def reset(self, scene, start, yaw, goal, dataset=None, guide="geodesic"):
+    def reset(self, scene, start, yaw, goal, dataset=None, guide="geodesic", no_slide=False):
         return self._rpc({"cmd": "reset", "scene": scene, "start": start,
-                          "yaw": yaw, "goal": goal, "dataset": dataset, "guide": guide})
+                          "yaw": yaw, "goal": goal, "dataset": dataset, "guide": guide,
+                          "no_slide": no_slide})
 
     def step(self, v, yaw_rate, dt):
         return self._rpc({"cmd": "step", "v": v, "yaw_rate": yaw_rate, "dt": dt})

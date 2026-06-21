@@ -111,9 +111,9 @@ class Server:
         return geo, bearing
 
     # ---- commands ----
-    def reset(self, scene, start, yaw, goal, dataset=None, guide="geodesic"):
+    def reset(self, scene, start, yaw, goal, dataset=None, guide="geodesic", no_slide=False):
         self._ensure_sim(scene, dataset)
-        self.guide = guide
+        self.guide = guide; self.no_slide = bool(no_slide)
         self.pos = np.asarray(start, dtype=np.float32)
         self.yaw = float(yaw); self.goal = np.asarray(goal, dtype=np.float32)
         self.collisions = 0; self.path_len = 0.0
@@ -125,7 +125,12 @@ class Server:
         q = quat_from_angle_axis(self.yaw, np.array([0.0, 1.0, 0.0]))
         fwd = quat_rotate_vector(q, np.array([0.0, 0.0, -1.0]))
         desired = self.pos + fwd * (v * dt)
-        end = np.asarray(self.sim.pathfinder.try_step(self.pos, desired), dtype=np.float32)
+        # no_slide: the robot STOPS at the obstacle instead of sliding along it, so driving
+        # into an unperceived obstacle actually halts/collides (removes the "collisions rare
+        # by construction" caveat -> perception under-seeing now has a real cost).
+        step_fn = (self.sim.pathfinder.try_step_no_sliding if getattr(self, "no_slide", False)
+                   else self.sim.pathfinder.try_step)
+        end = np.asarray(step_fn(self.pos, desired), dtype=np.float32)
         moved = float(np.linalg.norm(end - self.pos))
         # collision = the robot could not reach where it aimed (navmesh blocked/slid it).
         # measured as the gap between the intended and achieved point -- this catches
@@ -169,7 +174,7 @@ class Server:
         c = msg["cmd"]
         if c == "reset":
             return self.reset(msg["scene"], msg["start"], msg["yaw"], msg["goal"],
-                              msg.get("dataset"), msg.get("guide", "geodesic"))
+                              msg.get("dataset"), msg.get("guide", "geodesic"), msg.get("no_slide", False))
         if c == "step":
             return self.step(msg["v"], msg["yaw_rate"], msg["dt"])
         if c == "sample":
