@@ -67,11 +67,15 @@ TensorRT engines (student compute-core, 378px), built on the Nano:
 | TRT FP16 core | 67.8 ms | 14.4 qps | 477 MB | 2.2x |
 | TRT INT8 (--best) core | 51.5 ms | 19.1 qps | 380 MB | 2.8x |
 
-Steady-state re-validation (sustained INT8, tegrastats measured DURING inference, not cold):
-20.2 qps / 49 ms, compute rail (VDD_CPU_GPU_CV) **~9.8 W**, total board (VDD_IN) ~18.3 W. The
-bf16 GPU-rail numbers above are lighter/cold readings; the honest sustained INT8 power is
-~9.8 W on the compute rail -- still within the 10-15 W model-slice target, but higher than a
-cold measurement. (Profile at steady state, not cold.)
+Steady-state re-validation (tegrastats measured DURING sustained inference, not cold). FPS
+reproduces; power is reported per RAIL to avoid confusion (the bf16 sweep "GPU-rail" column
+above is total-board VDD_IN, not the compute rail):
+- **INT8 @378 (deployed)**: 20.2 qps / 49 ms; compute rail (VDD_CPU_GPU_CV) **~9.8 W**, total
+  board (VDD_IN) ~18.3 W. INT8 saturates the GPU at 20 qps, so its rails sit higher than bf16's.
+- **bf16 @378 (PyTorch baseline)**: 6.57 FPS; compute rail ~5.0 W, total board ~8.5 W (matches
+  the table's "GPU-rail" 8.5 W = VDD_IN). bf16 sweep compute rails: 252/378/518 -> 3.2/5.0/5.9 W.
+The deployed model slice (INT8 compute rail ~9.8 W) is within the 10-15 W target; energy/inference
+favors INT8 (9.8 W / 20 qps = 0.49 J vs bf16 5.0 W / 6.57 = 0.76 J). All steady-state, not cold.
 
 Adding the cheap Python geometry postproc gives **~16-17 FPS @378 on a $249 8GB Nano**.
 ONNX export required two fixes: monkeypatch SDPA to explicit matmul+softmax (torch 2.4
