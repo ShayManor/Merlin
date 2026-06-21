@@ -135,6 +135,15 @@ and anytime elasticity do not improve indoor navigation for a saturated compact 
 (with the mechanisms: saturation, the mean-vs-nearest-range objective trap, and negligible
 indoor staleness). A closed-loop Habitat sim is the next step to confirm at scale.
 
+### Architecture finding: decouple pose from depth
+A visual-inertial metric-scale estimator (TUM accelerometer + the student's own camera poses)
+was built and tested. It fails: the student's pose output is too noisy (~22% VO translation
+error; rotations too noisy to bring the accelerometer into a consistent gravity frame, so a
+fixed extrinsic cannot be calibrated). The compact distilled student is an excellent DENSE
+METRIC DEPTH model but a poor EGO-MOTION estimator. Implication: the "one model does pose +
+depth + scale" premise is not supported; pose/scale/drift should come from a decoupled front
+end (classical VO or tight IMU integration), with the student serving as the dense-depth node.
+
 ### Scal3R (alternate backbone)
 Scal3R (CVPR'26 Highlight, VGGT + test-time training) is a harder distillation target: its
 forward is deeply coupled to the TTT pipeline (5 fixes to get a clean per-frame teacher:
