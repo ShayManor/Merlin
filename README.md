@@ -219,14 +219,18 @@ The decoupled odometry integrates relative poses, so error accumulates; the C3 c
 IMU bounds it. A CPU-only characterization on TUM (`eval/c3_drift.py`): simulate the VI
 odometry (rotation random-walk at rate sigma + the C2 scale error) and measure ATE vs path
 length with vs without a 9-axis MPU-9250 keeping orientation bounded (accel -> roll/pitch,
-mag -> yaw). Result: the IMU bounds position drift to a FLAT ~1.5-2% floor regardless of the
-VO rotation-drift rate, while no-IMU grows unbounded (sigma 0.3/1/3 deg/keyframe -> no-IMU
-1.5/2.7/5.7%, 9-axis 1.5/2.0/2.0%; drift cut 0/25/65%). That ~1.5-2% floor IS the C2 scale
-error -- so bounded drift without a global backend is supported by the mechanism (IMU caps
-orientation drift, residual = the well-calibrated scale). An accel-ONLY variant fails (no
-gyro on TUM -> motion accel corrupts roll/pitch). Caveat: this is simulation (GT trajectory +
-synthetic sensor noise + synthetic VO drift over short ~15 m paths); real-rover validation
-(real sensor noise, real VO, 100 m+) is the C3/C4 hardware step.
+mag -> yaw). A full 9-axis IMU bounds position drift to a FLAT ~1.5-2% floor regardless of the
+VO rotation-drift rate (sigma 1/3 deg/keyframe -> 9-axis 1.5-2.0%, no-IMU 1.9-4.0%); that
+~1.5-2% floor IS the C2 scale error. BUT the critical caveat: the magnetometer is doing the
+work. A gyro+accel-only variant (realistic INDOOR, where the mag is unreliable -- steel,
+motors distort it) does NOT bound drift to the floor: yaw drifts and ATE grows to ~2.3-4.1%
+(at sigma=3), sometimes as bad as no-IMU. Because indoor motion is mostly horizontal, YAW
+drift dominates (a yaw error rotates the whole trajectory off), so bounding roll/pitch (accel)
+helps little -- you need a trusted YAW reference (mag, loop closure, or visual heading
+consistency) for the bounded-drift claim. So C3 is supported by the mechanism ONLY with a
+reliable yaw reference; the indoor-magnetometer risk is real. Caveat: simulation (GT
+trajectory + synthetic sensor noise + synthetic VO drift, short ~15 m paths); real-rover
+validation (real sensor noise, real VO/mag, 100 m+) is the C3/C4 hardware step.
 
 ### Scal3R (alternate backbone)
 Scal3R (CVPR'26 Highlight, VGGT + test-time training) is a harder distillation target: its

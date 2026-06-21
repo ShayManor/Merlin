@@ -7,12 +7,14 @@ for 2 of 3 orientation DOF (roll/pitch), and the C2 module anchors scale -- so o
 freely (no magnetometer here). This characterizes that on real TUM trajectories, CPU-only (no
 model, no sim): take the GT trajectory as ground truth, simulate a VIO front end by injecting a
 rotation random-walk (gyro-bias-like drift) + a small C2 scale error into the relative poses,
-integrate, and measure ATE vs path length for:
-  - NO-IMU: full 3-DOF rotation drift (roll+pitch+yaw all walk).
-  - IMU-GRAVITY: gravity (from the accelerometer low-freq = down) resets the roll/pitch
-    components of the drift each keyframe; only yaw accumulates.
-If IMU-GRAVITY drift << NO-IMU drift, the IMU bounds drift as C3 claims. TUM is short (<~50 m),
-so this measures the drift RATE and the gravity-bounding effect, not the full 100 m claim.
+integrate, and measure ATE vs path length for three sensor configs:
+  - no-IMU:     full 3-DOF rotation drift (roll+pitch+yaw all random-walk).
+  - gyro+accel: accel bounds roll/pitch, but YAW drifts (realistic indoor -- the magnetometer
+                is unreliable indoors). This is the honest-case config.
+  - 9-axis:     full MPU-9250 with a trusted mag -> all 3 DOF bounded.
+Finding: 9-axis bounds drift to the C2 scale-error floor (~1.5-2%); gyro+accel does NOT
+(yaw dominates for horizontal indoor motion), so the bounded-drift claim needs a trusted yaw
+reference (mag/loop-closure/visual heading). Sim only (GT traj + synthetic noise, short paths).
 """
 import argparse
 import glob
@@ -70,19 +72,22 @@ def run(seq, sigma_deg, scale_err, rng, stride=10):
     g_world_true = gw / (np.linalg.norm(gw) + 1e-9)
 
     def integrate(mode):
-        # mode: 'noimu' = orientation random-walk (drifts); '9axis' = full MPU-9250 keeps
-        # orientation BOUNDED to truth + realistic constant sensor error (accel roll/pitch
-        # ~0.5 deg, mag yaw ~1.5 deg) with NO accumulation -- the C3 mechanism.
-        est_p = [P[0].copy()]; est_R = Rk[0].copy()
+        # 'noimu'      = orientation random-walk (all 3 DOF drift).
+        # 'gyro_accel' = accel bounds roll/pitch, but YAW drifts (realistic INDOOR case --
+        #                the magnetometer is unreliable indoors: steel/motors distort it).
+        # '9axis'      = full MPU-9250 with a trusted mag -> all 3 DOF bounded.
+        est_p = [P[0].copy()]; est_R = Rk[0].copy(); yaw_drift = 0.0
         for i in range(1, len(ts)):
             dt_gt = Rk[i-1].T @ (P[i] - P[i-1])             # true relative translation (body)
             dt = dt_gt * (1.0 + scale_err)                  # C2 scale error
             if mode == "noimu":
-                dR = (Rk[i-1].T @ Rk[i]) @ so3_exp(rng.randn(3) * sigma)
-                est_R = est_R @ dR                          # accumulates -> drifts
-            else:  # 9axis: orientation locked to truth + bounded per-frame sensor noise
-                noise = rng.randn(3) * np.deg2rad([0.5, 0.5, 1.5])  # roll,pitch (accel), yaw (mag)
-                est_R = Rk[i] @ so3_exp(noise)              # bounded, no accumulation
+                est_R = est_R @ (Rk[i-1].T @ Rk[i]) @ so3_exp(rng.randn(3) * sigma)
+            elif mode == "gyro_accel":
+                yaw_drift += rng.randn() * sigma            # yaw random-walk (no mag), accumulates
+                rp = Rk[i] @ so3_exp(rng.randn(3) * np.deg2rad([0.5, 0.5, 0.0]))
+                est_R = so3_exp(g_world_true * yaw_drift) @ rp  # spin about world-up by yaw drift
+            else:  # 9axis: all bounded, no accumulation
+                est_R = Rk[i] @ so3_exp(rng.randn(3) * np.deg2rad([0.5, 0.5, 1.5]))
             est_p.append(est_p[-1] + est_R @ dt)
         return np.array(est_p)
 
@@ -96,7 +101,7 @@ def run(seq, sigma_deg, scale_err, rng, stride=10):
         return np.sqrt(((al-Y)**2).sum(1).mean())
 
     path_len = float(np.linalg.norm(np.diff(P, axis=0), axis=1).sum())
-    return ate(integrate("noimu")), ate(integrate("9axis")), path_len
+    return ate(integrate("noimu")), ate(integrate("gyro_accel")), ate(integrate("9axis")), path_len
 
 
 def main():
@@ -114,14 +119,14 @@ def main():
     for seq in args.seqs:
         if not os.path.exists(seq):
             continue
-        noimu, imu, pl = [], [], 0
+        noimu, ga, imu, pl = [], [], [], 0
         for _ in range(args.trials):
-            a, b, pl = run(seq, args.sigma_deg, args.scale_err, rng)
-            noimu.append(a); imu.append(b)
-        nm, im = np.median(noimu), np.median(imu)
+            a, b, c, pl = run(seq, args.sigma_deg, args.scale_err, rng)
+            noimu.append(a); ga.append(b); imu.append(c)
+        nm, gm, im = np.median(noimu), np.median(ga), np.median(imu)
         name = seq.split("/")[-1].replace("rgbd_dataset_", "")
-        print(f"  {name}: path {pl:.1f}m | NO-IMU(drift) ATE {nm:.3f}m ({100*nm/pl:.1f}%) | "
-              f"9-axis-IMU(bounded) ATE {im:.3f}m ({100*im/pl:.1f}%) | drift cut {100*(1-im/max(nm,1e-6)):.0f}%", flush=True)
+        print(f"  {name}: path {pl:.1f}m | no-IMU {100*nm/pl:.1f}% | gyro+accel(yaw drifts) {100*gm/pl:.1f}% | "
+              f"9-axis(+mag) {100*im/pl:.1f}%", flush=True)
     print("=== C3_DRIFT_DONE ===", flush=True)
 
 
