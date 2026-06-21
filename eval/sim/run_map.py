@@ -93,16 +93,18 @@ def main():
     args = ap.parse_args()
     os.makedirs(args.out, exist_ok=True)
 
+    # spawn the Habitat server (EGL/GPU) FIRST, then init the student CUDA context, so the
+    # render context is established before torch grabs the GPU (avoids EGL-render stalls).
+    server = spawn_server(args.port, args.conda_sh, args.env_name)
+    client = SimClient(args.port, timeout=120.0)
+    lp = LocalPlanner(max_speed=0.5, brake_dist=0.30)
+
     arms = [("gt", None)]
     if not args.validate:
         from perception import Perception
         for c in args.ckpts:
             tag, path = c.split("=", 1)
             arms.append((tag, Perception(path)))
-
-    server = spawn_server(args.port, args.conda_sh, args.env_name)
-    client = SimClient(args.port)
-    lp = LocalPlanner(max_speed=0.5, brake_dist=0.30)
 
     # fixed episode set (paired)
     eps = []
