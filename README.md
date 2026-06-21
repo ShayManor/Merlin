@@ -152,9 +152,11 @@ A one-time per-device accelerometer scale-factor calibration (k fit on one seque
 it on HELD-OUT sequences: calibrating on freiburg1_xyz and applying to freiburg1_room and
 _desk gives **1.3% and 0.4%** scale error (freiburg2_desk, own-device, 0.8%). **C2 (<5%
 metric scale) is MET** through the DECOUPLED design (student dense depth + VO/IMU pose+scale),
-not the single-model premise. Caveat: this uses GT-quality rotations as a stand-in for the VO
-front end; validating with ORB-SLAM-grade rotations is the next step. This is the positive
-contribution alongside the deployable node.
+not the single-model premise. Robustness to a realistic VO front end: injecting rotation noise, C2 scale error stays under
+5% up to ~3 deg of rotation error (0 deg 1.3%, 1 deg 1.6%, 2 deg 2.4%, 5 deg 5.4%) -- and
+mono VO (ORB-SLAM-grade) has well under 1-2 deg relative-rotation error over short windows.
+So the module works with a deployable VO front end, not just perfect rotations. This is the
+validated positive contribution alongside the deployable dense-depth node.
 
 ### Scal3R (alternate backbone)
 Scal3R (CVPR'26 Highlight, VGGT + test-time training) is a harder distillation target: its
