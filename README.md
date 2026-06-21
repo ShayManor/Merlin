@@ -25,7 +25,7 @@ This README summarizes the implementation and results to date.
 | C2 metric scale | <5% (mono+IMU) | **0.4-1.3%** via decoupled VI-scale + per-device calib (held-out); needs a production VIO front end (lightweight VO insufficient) | MET (decoupled) |
 | C3 drift | <1-2% over 100 m, no backend | mechanism validated in sim: 9-axis IMU bounds drift to ~1.5-2% (= C2 scale floor) -- BUT needs a trusted yaw reference (indoor-mag risk); rover-pending | characterized |
 | C4 closed-loop nav | >=80-90% success, N>=6 scenes | sim: distilled student navigates ~75% from mono, 0 collisions (5 ReplicaCAD apts); real rover pending | partial (sim) |
-| C5 real-time | >=5 FPS, ~10-15 W | **16-17 FPS** TRT-INT8 @378 (6.8 bf16), 8.5 W GPU rail, 0.68 GB | MET |
+| C5 real-time | >=5 FPS, ~10-15 W | **16-17 FPS** TRT-INT8 @378 (6.8 bf16), ~9.8 W compute rail at STEADY STATE (sustained, not cold), 0.68 GB | MET |
 | M1 nav-aware allocation | improve navigation | depth proxies improve but NAV is null/worse across two planners; perception trades success for safety | honest negative |
 | M2 deadline-elastic | hold deadline, beat fixed | null: student saturates; staleness absorbed; run the cheapest op point | honest negative |
 
@@ -66,6 +66,12 @@ TensorRT engines (student compute-core, 378px), built on the Nano:
 | PyTorch bf16 (full infer) | 147 ms | 6.8 FPS | - | 1x |
 | TRT FP16 core | 67.8 ms | 14.4 qps | 477 MB | 2.2x |
 | TRT INT8 (--best) core | 51.5 ms | 19.1 qps | 380 MB | 2.8x |
+
+Steady-state re-validation (sustained INT8, tegrastats measured DURING inference, not cold):
+20.2 qps / 49 ms, compute rail (VDD_CPU_GPU_CV) **~9.8 W**, total board (VDD_IN) ~18.3 W. The
+bf16 GPU-rail numbers above are lighter/cold readings; the honest sustained INT8 power is
+~9.8 W on the compute rail -- still within the 10-15 W model-slice target, but higher than a
+cold measurement. (Profile at steady state, not cold.)
 
 Adding the cheap Python geometry postproc gives **~16-17 FPS @378 on a $249 8GB Nano**.
 ONNX export required two fixes: monkeypatch SDPA to explicit matmul+softmax (torch 2.4
