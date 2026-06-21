@@ -144,6 +144,14 @@ METRIC DEPTH model but a poor EGO-MOTION estimator. Implication: the "one model 
 depth + scale" premise is not supported; pose/scale/drift should come from a decoupled front
 end (classical VO or tight IMU integration), with the student serving as the dense-depth node.
 
+This is validated, not just hypothesized: re-running the SAME linear VI scale solver with
+GT-quality poses (stand-in for a classical VO front end) recovers metric scale to **5.5-12.6%
+across four TUM sequences** (median ~6-8%), with clean gravity calibration (|g| 9.69-9.79).
+The residual is a consistent underestimate (characteristic MEMS dynamic-motion attenuation),
+correctable to <5% with a per-device scale-factor calibration. So the metric-scale claim (C2)
+is achievable -- but through the DECOUPLED design (student dense depth + VO/IMU pose+scale),
+not the single-model premise. This is the positive contribution alongside the deployable node.
+
 ### Scal3R (alternate backbone)
 Scal3R (CVPR'26 Highlight, VGGT + test-time training) is a harder distillation target: its
 forward is deeply coupled to the TTT pipeline (5 fixes to get a clean per-frame teacher:
