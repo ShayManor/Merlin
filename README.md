@@ -158,6 +158,14 @@ mono VO (ORB-SLAM-grade) has well under 1-2 deg relative-rotation error over sho
 So the module works with a deployable VO front end, not just perfect rotations. This is the
 validated positive contribution alongside the deployable dense-depth node.
 
+Caveat (keeps the claim honest): a LIGHTWEIGHT VO is not enough. A naive OpenCV essential-
+matrix VO gives 19-64 deg relative-rotation error on these sequences (small baseline +
+appearance change), far above the ~3 deg the scale module tolerates. So C2 requires a
+PRODUCTION VIO front end (ORB-SLAM3 / VINS with bundle adjustment and map tracking, which
+routinely achieve <0.5 deg) -- a standard but real integration. End-to-end validation with
+ORB-SLAM3 rotations is the concrete next engineering step; the module + robustness results
+establish that it will hold given that front end.
+
 ### Scal3R (alternate backbone)
 Scal3R (CVPR'26 Highlight, VGGT + test-time training) is a harder distillation target: its
 forward is deeply coupled to the TTT pipeline (5 fixes to get a clean per-frame teacher:
