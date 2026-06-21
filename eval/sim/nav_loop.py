@@ -28,7 +28,7 @@ def choose_res(controller, prev_speed, travel_budget):
 
 def run_episode(client, perception, planner, ep, controller="fixed_378",
                 success_radius=0.4, max_sim_time=120.0,
-                travel_budget=0.10, time_scale=1.0, stuck_patience=70, depth_smooth=0.0):
+                travel_budget=0.10, time_scale=1.0, stuck_patience=70):
     """Returns a per-episode metrics dict. time_scale multiplies op-point latency
     (lets us probe the staleness mechanism without retraining)."""
     obs = client.reset(ep["scene"], ep["start"], ep["yaw"], ep["goal"])
@@ -53,18 +53,6 @@ def run_episode(client, perception, planner, ep, controller="fixed_378",
             depth = perception.depth(obs["rgb"], res=res)
         else:
             depth = obs["depth"]                      # GT-perception upper bound
-        if depth_smooth > 0:
-            import cv2
-            # normalized (masked) gaussian blur: GT depth has zero/invalid pixels where rays
-            # hit no geometry; a plain GaussianBlur smears those zeros into valid depth and
-            # collapses the forward range to ~0 (phantom obstacle -> stall). Blur only valid
-            # pixels and renormalize so the smoothness sweep measures actual smoothing, not
-            # invalid-pixel bleed (student depth has no invalid pixels, so this is a no-op there).
-            d = depth.astype(np.float32)
-            valid = (np.isfinite(d) & (d > 1e-3)).astype(np.float32)
-            db = cv2.GaussianBlur(np.where(valid > 0, d, 0.0), (0, 0), depth_smooth)
-            vb = cv2.GaussianBlur(valid, (0, 0), depth_smooth)
-            depth = np.where(vb > 1e-6, db / np.maximum(vb, 1e-6), d)
         bearings, ranges = range_scan(depth, hfov)
         v, yaw_rate, info = planner.command(obs["goal_bearing"], bearings, ranges)
 
