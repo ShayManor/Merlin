@@ -133,7 +133,29 @@ contribution here is a SYSTEM + a careful characterization: a deployable INT8 me
 node at 16-17 FPS on an 8GB Nano, plus the finding that task-aware distillation objectives
 and anytime elasticity do not improve indoor navigation for a saturated compact student
 (with the mechanisms: saturation, the mean-vs-nearest-range objective trap, and negligible
-indoor staleness). A closed-loop Habitat sim is the next step to confirm at scale.
+indoor staleness). This was confirmed at scale in closed loop (next section).
+
+### Closed-loop validation (Habitat) — the load-bearing result
+A latency-coupled photorealistic sim (Habitat-sim, ReplicaCAD apartments; reactive
+VFH/proportional-braking planner; sim time advanced by the measured Jetson per-op-point
+latency so a slow map goes stale) tested M1 and M2 in actual navigation. Code in `eval/sim/`.
+- **System works (positive, first end-to-end MERLIN demo):** the distilled 230M student drives
+  the planner to ~75% goal success with zero collisions from a single mono RGB stream across
+  5 apartments.
+- **M1 null (well-powered):** nav-aware vs uniform, n=119 paired episodes, success delta
+  -0.009 [-0.06, +0.04] — statistically indistinguishable on success / SPL / collisions.
+- **M2 null:** success identical to three decimals (0.874) across fixed_252/378/518/adaptive;
+  staleness is real and ordered (up to ~83 mm at 2 m/s) but absorbed by proportional braking.
+- **Headline (counterintuitive):** a perfect-depth ORACLE navigates **44 points worse** than
+  the student (0.32 vs 0.75 success). Navigation here is **planner-bound, not
+  perception-fidelity-bound** — a reactive planner brakes on any perceived obstacle, so sharper
+  depth (M1) or fresher maps (M2) or even an oracle do not help, and over-precise depth stalls
+  in clutter. The distilled student already CLEARS the perception bar for reactive indoor nav.
+- **SWaP-C payoff:** since resolution does not buy success, success-per-watt is maximized by the
+  CHEAPEST op point — **run fixed_252 always** (~2.7x less energy/m, same success). The honest
+  paper framing: how much perception fidelity does reactive indoor nav need? The student already
+  clears it; the lever is the planner/mapping stack. (Caveats: single reactive planner, navmesh
+  global guide so collisions are rare by construction, per-episode GT scale align as IMU stand-in.)
 
 ### Architecture finding: decouple pose from depth
 A visual-inertial metric-scale estimator (TUM accelerometer + the student's own camera poses)
