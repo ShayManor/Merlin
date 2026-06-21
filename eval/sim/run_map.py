@@ -46,7 +46,7 @@ def boot_ci(xs, n=2000, seed=0):
 
 
 def run_episode_map(client, perception, lp, ep, res=378, success_radius=0.4,
-                    max_sim_time=120.0, stuck_patience=90, occ_thresh=1, no_slide=False):
+                    max_sim_time=120.0, stuck_patience=90, occ_thresh=1, no_slide=False, max_ticks=400):
     obs = client.reset(ep["scene"], ep["start"], ep["yaw"], ep["goal"],
                        ep.get("dataset"), guide="straight", no_slide=no_slide)
     hfov = obs["hfov"]
@@ -54,8 +54,9 @@ def run_episode_map(client, perception, lp, ep, res=378, success_radius=0.4,
         perception.calibrate(obs["rgb"], obs["depth"], res=378)
     mapper = MapPlanner(ep["start"], ep["goal"], occ_thresh=occ_thresh)
     from perception import LATENCY_MS
-    sim_t = 0.0; best_geo = obs["geo_dist"]; stuck = 0; success = False
-    while sim_t < max_sim_time:
+    sim_t = 0.0; best_geo = obs["geo_dist"]; stuck = 0; success = False; ticks = 0
+    while sim_t < max_sim_time and ticks < max_ticks:
+        ticks += 1
         if np.isfinite(obs["geo_dist"]) and obs["geo_dist"] <= success_radius:
             success = True; break
         depth = obs["depth"] if perception is None else perception.depth(obs["rgb"], res=res)
@@ -91,6 +92,8 @@ def main():
     ap.add_argument("--env-name", default="habenv")
     ap.add_argument("--occ-thresh", type=int, default=1, help="hits to mark a cell occupied (stricter=less clutter)")
     ap.add_argument("--no-slide", action="store_true", help="robot stops at obstacles (real collisions)")
+    ap.add_argument("--max-sim-time", type=float, default=120.0)
+    ap.add_argument("--max-ticks", type=int, default=400)
     ap.add_argument("--out", default="/workspace/ckpt/sim_map")
     args = ap.parse_args()
     os.makedirs(args.out, exist_ok=True)
@@ -140,11 +143,12 @@ def main():
         succ = []
         for ep in eps:
             try:
-                r = run_episode_map(state["client"], perc, lp, ep, occ_thresh=args.occ_thresh, no_slide=args.no_slide)
+                r = run_episode_map(state["client"], perc, lp, ep, occ_thresh=args.occ_thresh, no_slide=args.no_slide, max_sim_time=args.max_sim_time, max_ticks=args.max_ticks)
             except Exception as e:
                 print(f"[ep fail {tag}: {repr(e)[:80]}; restarting]", flush=True)
                 restart(); continue
             r["arm"] = tag; rows.append(r); succ.append(r["success"])
+            json.dump(rows, open(os.path.join(args.out, "map_rows.json"), "w"))
         m, lo, hi = boot_ci(succ)
         print(f"  {tag}: success {m:.3f} [{lo:.3f},{hi:.3f}] n={len(succ)} "
               f"collisions/m {np.mean([x['collisions_per_m'] for x in rows if x['arm']==tag] or [0]):.3f}", flush=True)
