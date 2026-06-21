@@ -28,7 +28,7 @@ def choose_res(controller, prev_speed, travel_budget):
 
 def run_episode(client, perception, planner, ep, controller="fixed_378",
                 success_radius=0.4, max_sim_time=120.0,
-                travel_budget=0.10, time_scale=1.0, stuck_patience=70):
+                travel_budget=0.10, time_scale=1.0, stuck_patience=70, depth_smooth=0.0):
     """Returns a per-episode metrics dict. time_scale multiplies op-point latency
     (lets us probe the staleness mechanism without retraining)."""
     obs = client.reset(ep["scene"], ep["start"], ep["yaw"], ep["goal"])
@@ -53,6 +53,9 @@ def run_episode(client, perception, planner, ep, controller="fixed_378",
             depth = perception.depth(obs["rgb"], res=res)
         else:
             depth = obs["depth"]                      # GT-perception upper bound
+        if depth_smooth > 0:
+            import cv2
+            depth = cv2.GaussianBlur(depth.astype(np.float32), (0, 0), depth_smooth)
         bearings, ranges = range_scan(depth, hfov)
         v, yaw_rate, info = planner.command(obs["goal_bearing"], bearings, ranges)
 
