@@ -46,13 +46,13 @@ def boot_ci(xs, n=2000, seed=0):
 
 
 def run_episode_map(client, perception, lp, ep, res=378, success_radius=0.4,
-                    max_sim_time=120.0, stuck_patience=90):
+                    max_sim_time=120.0, stuck_patience=90, occ_thresh=1):
     obs = client.reset(ep["scene"], ep["start"], ep["yaw"], ep["goal"],
                        ep.get("dataset"), guide="straight")
     hfov = obs["hfov"]
     if perception is not None:
         perception.calibrate(obs["rgb"], obs["depth"], res=378)
-    mapper = MapPlanner(ep["start"], ep["goal"])
+    mapper = MapPlanner(ep["start"], ep["goal"], occ_thresh=occ_thresh)
     from perception import LATENCY_MS
     sim_t = 0.0; best_geo = obs["geo_dist"]; stuck = 0; success = False
     while sim_t < max_sim_time:
@@ -89,6 +89,7 @@ def main():
     ap.add_argument("--port", type=int, default=5562)
     ap.add_argument("--conda-sh", default="/workspace/miniconda3/etc/profile.d/conda.sh")
     ap.add_argument("--env-name", default="habenv")
+    ap.add_argument("--occ-thresh", type=int, default=1, help="hits to mark a cell occupied (stricter=less clutter)")
     ap.add_argument("--out", default="/workspace/ckpt/sim_map")
     args = ap.parse_args()
     os.makedirs(args.out, exist_ok=True)
@@ -138,7 +139,7 @@ def main():
         succ = []
         for ep in eps:
             try:
-                r = run_episode_map(state["client"], perc, lp, ep)
+                r = run_episode_map(state["client"], perc, lp, ep, occ_thresh=args.occ_thresh)
             except Exception as e:
                 print(f"[ep fail {tag}: {repr(e)[:80]}; restarting]", flush=True)
                 restart(); continue

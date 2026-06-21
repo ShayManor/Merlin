@@ -20,7 +20,7 @@ import numpy as np
 
 class MapPlanner:
     def __init__(self, start, goal, cell=0.10, margin=6.0, robot_radius=0.18,
-                 obs_lo=0.15, obs_hi=0.95, max_range=4.0, replan_every=3):
+                 obs_lo=0.15, obs_hi=0.95, max_range=4.0, replan_every=3, occ_thresh=1):
         s = np.asarray(start, np.float32); g = np.asarray(goal, np.float32)
         lo = np.minimum(s, g) - margin; hi = np.maximum(s, g) + margin
         self.x0, self.z0 = float(lo[0]), float(lo[2])
@@ -33,6 +33,7 @@ class MapPlanner:
         self.robot_radius = robot_radius
         self.obs_lo, self.obs_hi, self.max_range = obs_lo, obs_hi, max_range
         self.replan_every = replan_every
+        self.occ_thresh = occ_thresh
         self._tick = 0
         self._path = None
 
@@ -89,8 +90,10 @@ class MapPlanner:
         return pts
 
     def _grid_blocked(self):
-        # a cell is an obstacle if hits dominate; inflate by robot radius
-        block = (self.occ >= 1) & (self.occ >= self.free)
+        # a cell is an obstacle if hits dominate; inflate by robot radius. occ_thresh raises
+        # the hit count needed (stricter = less clutter from thin/fine obstacles -> tests
+        # whether the 'perfect depth hurts' effect is a mapping-clutter artifact).
+        block = (self.occ >= self.occ_thresh) & (self.occ >= self.free)
         r = int(np.ceil(self.robot_radius/self.cell))
         if r > 0 and block.any():
             from scipy.ndimage import binary_dilation
