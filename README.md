@@ -237,7 +237,12 @@ motors distort it) does NOT bound drift to the floor: yaw drifts and ATE grows t
 drift dominates (a yaw error rotates the whole trajectory off), so bounding roll/pitch (accel)
 helps little -- you need a trusted YAW reference (mag, loop closure, or visual heading
 consistency) for the bounded-drift claim. So C3 is supported by the mechanism ONLY with a
-reliable yaw reference; the indoor-magnetometer risk is real. Caveat: simulation (GT
+reliable yaw reference; the indoor-magnetometer risk is real. Constraint-compatible fix (no
+mag, no global backend): a Manhattan-world / vanishing-point heading from the visual input.
+Validated CPU-only on TUM -- the dominant horizontal line direction has std ~7 deg (mean 0.6,
+no accumulation), so an indoor VP heading bounds yaw without a magnetometer (a proper
+VP+RANSAC estimator would tighten the ~7 deg). This is the recommended indoor yaw reference.
+Caveat: simulation (GT
 trajectory + synthetic sensor noise + synthetic VO drift, short ~15 m paths); real-rover
 validation (real sensor noise, real VO/mag, 100 m+) is the C3/C4 hardware step.
 
