@@ -50,9 +50,10 @@ def main():
     ap.add_argument("--nwin", type=int, default=60)
     ap.add_argument("--frames", type=int, default=8)
     ap.add_argument("--stride", type=int, default=4)
+    ap.add_argument("--accel-scale", type=float, default=1.0, help="per-device accel scale-factor calibration")
     args = ap.parse_args()
     A = np.array([[float(x) for x in l.split()] for l in open(args.seq+"/accelerometer.txt") if not l.startswith("#")])
-    at, av = A[:, 0], A[:, 1:4]
+    at, av = A[:, 0], A[:, 1:4] * args.accel_scale
     G = np.array([[float(x) for x in l.split()] for l in open(args.seq+"/groundtruth.txt") if not l.startswith("#")])
     gt_t = G[:, 0]
     def gpos(t): return G[np.argmin(np.abs(gt_t-t)), 1:4]
