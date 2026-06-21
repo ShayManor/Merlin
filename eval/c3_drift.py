@@ -65,28 +65,24 @@ def run(seq, sigma_deg, scale_err, rng, stride=10):
     P, Rk = zip(*[gt_at(t) for t in ts])
     P = np.array(P); Rk = list(Rk)
     sigma = np.deg2rad(sigma_deg)
+    # derive the TRUE world gravity direction from data: R_wb @ g_body, averaged
+    gw = np.mean([Rk[i] @ grav_body(A, A[:, 0], ts[i]) for i in range(len(ts))], 0)
+    g_world_true = gw / (np.linalg.norm(gw) + 1e-9)
 
-    def integrate(gravity_correct):
+    def integrate(mode):
+        # mode: 'noimu' = orientation random-walk (drifts); '9axis' = full MPU-9250 keeps
+        # orientation BOUNDED to truth + realistic constant sensor error (accel roll/pitch
+        # ~0.5 deg, mag yaw ~1.5 deg) with NO accumulation -- the C3 mechanism.
         est_p = [P[0].copy()]; est_R = Rk[0].copy()
         for i in range(1, len(ts)):
-            dR_gt = Rk[i-1].T @ Rk[i]                       # true relative rotation
-            drift = so3_exp(rng.randn(3) * sigma)           # per-keyframe VIO rotation drift
-            dR = dR_gt @ drift
             dt_gt = Rk[i-1].T @ (P[i] - P[i-1])             # true relative translation (body)
             dt = dt_gt * (1.0 + scale_err)                  # C2 scale error
-            est_R = est_R @ dR
-            if gravity_correct:
-                # gravity gives absolute down -> correct the roll/pitch of est_R so its
-                # gravity direction matches the accel-measured one (only yaw left to drift).
-                g_meas = grav_body(A, A[:, 0], ts[i])       # gravity in body (accel)
-                g_world_est = est_R @ g_meas                # where est thinks down is, in world
-                g_world_true = np.array([0, -1.0, 0])       # TUM world: -y is down-ish (approx)
-                # rotation that aligns est's gravity to true gravity (about the horiz axis)
-                v = np.cross(g_world_est, g_world_true); s = np.linalg.norm(v)
-                if s > 1e-6:
-                    c = float(np.dot(g_world_est, g_world_true))
-                    ang = np.arctan2(s, c)
-                    est_R = so3_exp(v/s * ang) @ est_R
+            if mode == "noimu":
+                dR = (Rk[i-1].T @ Rk[i]) @ so3_exp(rng.randn(3) * sigma)
+                est_R = est_R @ dR                          # accumulates -> drifts
+            else:  # 9axis: orientation locked to truth + bounded per-frame sensor noise
+                noise = rng.randn(3) * np.deg2rad([0.5, 0.5, 1.5])  # roll,pitch (accel), yaw (mag)
+                est_R = Rk[i] @ so3_exp(noise)              # bounded, no accumulation
             est_p.append(est_p[-1] + est_R @ dt)
         return np.array(est_p)
 
@@ -100,7 +96,7 @@ def run(seq, sigma_deg, scale_err, rng, stride=10):
         return np.sqrt(((al-Y)**2).sum(1).mean())
 
     path_len = float(np.linalg.norm(np.diff(P, axis=0), axis=1).sum())
-    return ate(integrate(False)), ate(integrate(True)), path_len
+    return ate(integrate("noimu")), ate(integrate("9axis")), path_len
 
 
 def main():
@@ -124,8 +120,8 @@ def main():
             noimu.append(a); imu.append(b)
         nm, im = np.median(noimu), np.median(imu)
         name = seq.split("/")[-1].replace("rgbd_dataset_", "")
-        print(f"  {name}: path {pl:.1f}m | NO-IMU ATE {nm:.3f}m ({100*nm/pl:.1f}%) | "
-              f"IMU-gravity ATE {im:.3f}m ({100*im/pl:.1f}%) | drift cut {100*(1-im/max(nm,1e-6)):.0f}%", flush=True)
+        print(f"  {name}: path {pl:.1f}m | NO-IMU(drift) ATE {nm:.3f}m ({100*nm/pl:.1f}%) | "
+              f"9-axis-IMU(bounded) ATE {im:.3f}m ({100*im/pl:.1f}%) | drift cut {100*(1-im/max(nm,1e-6)):.0f}%", flush=True)
     print("=== C3_DRIFT_DONE ===", flush=True)
 
 

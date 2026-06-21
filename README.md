@@ -214,6 +214,20 @@ routinely achieve <0.5 deg) -- a standard but real integration. End-to-end valid
 ORB-SLAM3 rotations is the concrete next engineering step; the module + robustness results
 establish that it will hold given that front end.
 
+### C3: does the IMU bound drift without a global backend? (mechanism validated in sim)
+The decoupled odometry integrates relative poses, so error accumulates; the C3 claim is the
+IMU bounds it. A CPU-only characterization on TUM (`eval/c3_drift.py`): simulate the VI
+odometry (rotation random-walk at rate sigma + the C2 scale error) and measure ATE vs path
+length with vs without a 9-axis MPU-9250 keeping orientation bounded (accel -> roll/pitch,
+mag -> yaw). Result: the IMU bounds position drift to a FLAT ~1.5-2% floor regardless of the
+VO rotation-drift rate, while no-IMU grows unbounded (sigma 0.3/1/3 deg/keyframe -> no-IMU
+1.5/2.7/5.7%, 9-axis 1.5/2.0/2.0%; drift cut 0/25/65%). That ~1.5-2% floor IS the C2 scale
+error -- so bounded drift without a global backend is supported by the mechanism (IMU caps
+orientation drift, residual = the well-calibrated scale). An accel-ONLY variant fails (no
+gyro on TUM -> motion accel corrupts roll/pitch). Caveat: this is simulation (GT trajectory +
+synthetic sensor noise + synthetic VO drift over short ~15 m paths); real-rover validation
+(real sensor noise, real VO, 100 m+) is the C3/C4 hardware step.
+
 ### Scal3R (alternate backbone)
 Scal3R (CVPR'26 Highlight, VGGT + test-time training) is a harder distillation target: its
 forward is deeply coupled to the TTT pipeline (5 fixes to get a clean per-frame teacher:
