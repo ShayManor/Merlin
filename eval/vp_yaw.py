@@ -45,9 +45,11 @@ def line_normals(im_gray, lsd, min_len=40):
     return n, L
 
 
-def ransac_vp(n, L, iters=300, thresh_deg=1.5, rng=None):
-    """Dominant vanishing point: a direction v perpendicular to many plane normals (|n.v| small)."""
-    best_v, best_in = None, -1
+def ransac_vp(n, L, iters=400, thresh_deg=1.5, rng=None, horiz_max=0.35):
+    """Dominant HORIZONTAL vanishing point: a direction v perpendicular to many plane normals
+    (|n.v| small). Constrained to horizontal (|v_y| small) so it locks onto a wall direction,
+    not the vertical VP (vertical edges) whose azimuth is meaningless for yaw."""
+    best_v, best_in, best_mask = None, -1, None
     th = np.sin(np.deg2rad(thresh_deg))
     idx = np.arange(len(n))
     for _ in range(iters):
@@ -56,16 +58,18 @@ def ransac_vp(n, L, iters=300, thresh_deg=1.5, rng=None):
         if nv < 1e-9:
             continue
         v /= nv
+        if abs(v[1]) > horiz_max:                  # reject near-vertical VPs (image-y ~ up)
+            continue
         inl = np.abs(n @ v) < th
         score = L[inl].sum()
         if score > best_in:
             best_in, best_v, best_mask = score, v, inl
-    if best_v is None:
+    if best_v is None or best_mask is None:
         return None
-    # refine: SVD of inlier normals -> v is the least-significant singular direction
     A = n[best_mask] * L[best_mask, None]
     _, _, Vt = np.linalg.svd(A)
-    return Vt[-1]
+    v = Vt[-1]
+    return v if abs(v[1]) < horiz_max else best_v   # keep horizontal after refine
 
 
 def vp_yaw(v):

@@ -251,9 +251,15 @@ helps little -- you need a trusted YAW reference (mag, loop closure, or visual h
 consistency) for the bounded-drift claim. So C3 is supported by the mechanism ONLY with a
 reliable yaw reference; the indoor-magnetometer risk is real. Constraint-compatible fix (no
 mag, no global backend): a Manhattan-world / vanishing-point heading from the visual input.
-Validated CPU-only on TUM -- the dominant horizontal line direction has std ~7 deg (mean 0.6,
-no accumulation), so an indoor VP heading bounds yaw without a magnetometer (a proper
-VP+RANSAC estimator would tighten the ~7 deg). This is the recommended indoor yaw reference.
+Validated CPU-only on TUM with a proper VP/Manhattan estimator (`eval/vp_yaw.py`: RANSAC on
+calibrated interpretation-plane normals, constrained to horizontal vanishing directions). The
+recovered heading tracks GT yaw with a scene-dependent residual: ~3 deg median in structured,
+level-camera scenes (freiburg1_xyz) up to ~15 deg in cluttered/rotating ones (desk). So an
+indoor VP heading is an accurate absolute yaw reference *without a magnetometer or backend* in
+structured scenes, but degrades with clutter -- a deployment should FUSE it with the gyro
+(complementary: gyro for short-term, VP for long-term absolute heading), not use it standalone.
+A naive (unconstrained) VP search is worse (locks onto the vertical VP); the horizontal
+constraint is essential. This is the recommended indoor yaw reference (gyro+VP), not the mag.
 Caveat: simulation (GT
 trajectory + synthetic sensor noise + synthetic VO drift, short ~15 m paths); real-rover
 validation (real sensor noise, real VO/mag, 100 m+) is the C3/C4 hardware step.
