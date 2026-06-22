@@ -259,7 +259,11 @@ indoor VP heading is an accurate absolute yaw reference *without a magnetometer 
 structured scenes, but degrades with clutter -- a deployment should FUSE it with the gyro
 (complementary: gyro for short-term, VP for long-term absolute heading), not use it standalone.
 A naive (unconstrained) VP search is worse (locks onto the vertical VP); the horizontal
-constraint is essential. This is the recommended indoor yaw reference (gyro+VP), not the mag.
+constraint is essential. The gyro+VP complementary filter (`eval/yaw_fusion.py`) closes the
+loop: with a simulated MEMS gyro (0.5 deg/s bias) that drifts +11-22 deg over the run and the
+real per-frame VP heading, the fused yaw stays **bounded at 2.9-4.3 deg RMS** -- better than
+gyro-only (drifts) and VP-only (scene-noisy). So bounded indoor yaw with no magnetometer and
+no global backend is demonstrated end to end (gyro for short-term, VP for long-term absolute).
 Caveat: simulation (GT
 trajectory + synthetic sensor noise + synthetic VO drift, short ~15 m paths); real-rover
 validation (real sensor noise, real VO/mag, 100 m+) is the C3/C4 hardware step.
