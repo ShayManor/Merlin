@@ -159,13 +159,15 @@ def main():
     ap.add_argument("--out", default="/workspace/ckpt/student.pt")
     ap.add_argument("--init", default="")
     ap.add_argument("--tag", default="cache")
+    ap.add_argument("--aat-depth", type=int, default=8,
+                    help="AAT layers (capacity ablation: 8=230M default, 12=258M)")
     args = ap.parse_args()
     os.makedirs(os.path.dirname(args.out), exist_ok=True)
     dev = "cuda"
     torch.manual_seed(0); random.seed(0)
 
     train, val = load_cache(args.cache, args.val_name)
-    student = build_student(size="base", aat_depth=8, device=dev)
+    student = build_student(size="base", aat_depth=args.aat_depth, device=dev)
     if args.init and os.path.exists(args.init):
         sd = torch.load(args.init, map_location=dev, weights_only=False)["state_dict"]
         student.load_state_dict(sd); print(f"[init] loaded {args.init}", flush=True)
@@ -215,7 +217,7 @@ def main():
             print(f"  >>> EVAL {ev}", flush=True)
             log["eval"].append(ev)
             torch.save({"state_dict": student.state_dict(), "size": "base",
-                        "aat_depth": 8, "step": step, "tag": args.tag}, args.out)
+                        "aat_depth": args.aat_depth, "step": step, "tag": args.tag}, args.out)
             json.dump(log, open(args.out.replace(".pt", f"_{args.tag}.json"), "w"), indent=2)
     print(f"=== DONE {args.tag} === {args.out}", flush=True)
 
