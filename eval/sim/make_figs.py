@@ -85,14 +85,42 @@ def fig_m2(rows, out):
     print("wrote", out)
 
 
+def fig_smooth(rows, out):
+    # arm names like "gt_s4.0" / "student_s0.0": success vs blur sigma per ckpt
+    import re
+    pts = {}
+    for r in rows:
+        m = re.match(r"(.+)_s([0-9.]+)$", r["arm"])
+        if not m:
+            continue
+        ck, sig = m.group(1), float(m.group(2))
+        pts.setdefault(ck, {}).setdefault(sig, []).append(r["success"])
+    fig, ax = plt.subplots(figsize=(4.6, 3.4))
+    cmap = {"gt": "#2ca02c", "student": "#1f77b4", "baseline": "#888888"}
+    lab = {"gt": "GT (oracle)", "student": "distilled student", "baseline": "baseline"}
+    for ck in sorted(pts):
+        sigs = sorted(pts[ck])
+        ys, los, his = [], [], []
+        for s in sigs:
+            m, lo, hi = boot(pts[ck][s])
+            ys.append(m); los.append(lo); his.append(hi)
+        ax.plot(sigs, ys, "-o", color=cmap.get(ck), label=lab.get(ck, ck), lw=1.8, ms=5)
+        ax.fill_between(sigs, los, his, color=cmap.get(ck), alpha=0.15)
+    ax.set_xlabel("depth blur sigma (px)"); ax.set_ylabel("success rate")
+    ax.set_title("smoothing the oracle's depth recovers navigation")
+    ax.legend(frameon=False, fontsize=9)
+    fig.tight_layout(); fig.savefig(out, bbox_inches="tight")
+    print("wrote", out)
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--rows", required=True)
-    ap.add_argument("--mode", choices=["m1", "m2"], required=True)
+    ap.add_argument("--mode", choices=["m1", "m2", "smooth"], required=True)
     ap.add_argument("--out", required=True)
     args = ap.parse_args()
     rows = load_rows(args.rows)
-    (fig_m1 if args.mode == "m1" else fig_m2)(rows, args.out)
+    {"m1": fig_m1, "m2": fig_m2, "smooth": fig_smooth}[args.mode](rows, args.out)
 
 
 if __name__ == "__main__":

@@ -229,3 +229,6 @@ claude.md
 *.engine
 *.plan
 updates/
+
+# Autonomous research loop log (not committed)
+log.md

@@ -68,7 +68,7 @@ def aggregate(rows, key):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--mode", choices=["smoke", "m1", "m2"], required=True)
+    ap.add_argument("--mode", choices=["smoke", "m1", "m2", "smooth"], required=True)
     ap.add_argument("--scenes", nargs="+", required=True, help="scene id or .glb path")
     ap.add_argument("--dataset", default=None, help="scene_dataset_config.json (ReplicaCAD)")
     ap.add_argument("--ckpts", nargs="*", default=[], help="tag=path ...")
@@ -89,6 +89,11 @@ def main():
     ap.add_argument("--brake-dist", type=float, default=0.45,
                     help="planner safety margin; tight values stress perception precision")
     ap.add_argument("--robot-radius", type=float, default=0.18)
+    ap.add_argument("--smooth-levels", nargs="+", type=float, default=[0.0],
+                    help="depth GaussianBlur sigmas for --mode smooth")
+    ap.add_argument("--no-slide", action="store_true",
+                    help="robot STOPS at obstacles instead of sliding (collisions have a "
+                         "real cost; removes the navmesh safety net)")
     args = ap.parse_args()
     os.makedirs(args.out, exist_ok=True)
 
@@ -109,6 +114,13 @@ def main():
             for ctrl in args.controllers:
                 arms.append({"name": f"{ctrl}@v{sp}", "ckpt": tag,
                              "controller": ctrl, "speed": sp})
+    elif args.mode == "smooth":
+        # each (ckpt, smooth-sigma) is an arm -> tests whether blurring depth to a
+        # student-like smoothness recovers the perfect-depth oracle's navigation
+        for tag in ckpts:
+            for s in args.smooth_levels:
+                arms.append({"name": f"{tag}_s{s}", "ckpt": tag, "smooth": s,
+                             "controller": args.controllers[0], "speed": args.speeds[0]})
 
     # respawnable server: habitat-sim can sporadically die across many episodes; a hung
     # server would otherwise hang the client and lose the whole run. Keep a mutable handle
@@ -175,9 +187,10 @@ def main():
                     try:
                         # _EpClient threads the episode's dataset into reset (ReplicaCAD)
                         m = run_episode(_EpClient(state["client"], ep.get("dataset"),
-                                                  args.guide),
+                                                  args.guide, args.no_slide),
                                         perc, planner, ep_r, controller=arm["controller"],
-                                        time_scale=args.time_scale)
+                                        time_scale=args.time_scale,
+                                        depth_smooth=arm.get("smooth", 0.0))
                     except Exception as e:
                         print(f"[ep {ei} arm {arm['name']} FAILED: {e}; restarting]", flush=True)
                         restart()
@@ -210,10 +223,10 @@ def main():
 
 class _EpClient:
     """Wraps SimClient so run_episode's reset() carries the episode's dataset + guide."""
-    def __init__(self, client, dataset, guide="geodesic"):
-        self.c = client; self.dataset = dataset; self.guide = guide
+    def __init__(self, client, dataset, guide="geodesic", no_slide=False):
+        self.c = client; self.dataset = dataset; self.guide = guide; self.no_slide = no_slide
     def reset(self, scene, start, yaw, goal):
-        return self.c.reset(scene, start, yaw, goal, self.dataset, self.guide)
+        return self.c.reset(scene, start, yaw, goal, self.dataset, self.guide, self.no_slide)
     def step(self, v, yaw_rate, dt):
         return self.c.step(v, yaw_rate, dt)
 
