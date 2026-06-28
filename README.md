@@ -4,7 +4,6 @@
 foundation model distilled to 230M and quantized to run live on a $249 Jetson Orin Nano 8GB,
 turning one monocular RGB stream into metric depth + pose for closed-loop indoor navigation.
 
-- Code: [github.com/ShayManor/Merlin](https://github.com/ShayManor/Merlin)
 - Model + ONNX: [huggingface.co/ShayManor/merlin-mapanything-student](https://huggingface.co/ShayManor/merlin-mapanything-student)
 
 ## Core findings

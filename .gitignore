@@ -232,3 +232,6 @@ updates/
 
 # Autonomous research loop log (not committed)
 log.md
+
+# Playwright MCP scratch (scraped pages, not project files)
+.playwright-mcp/
