@@ -61,6 +61,11 @@ def loss_fn(pred_z, gt, alpha):
 def evaluate(student, val, dev, res, n=40):
     student.eval()
     mr, corr = [], []
+    # Split by TRUE range. A whole-frame absrel of 0.208 hid a near field running at 0.64
+    # relative error, so a single number cannot tell a near-field gain from a mid-range loss
+    # traded for it -- and 1.2-2.5 m is the band the voxel map is actually built from.
+    split = {"near": (0.2, 1.0), "mid": (1.2, 2.5)}
+    sp = {k: [] for k in split}
     for rp, dp in val[:n]:
         view = make_views([rp], (res // 14) * 14, dev)
         pr = student(view, memory_efficient_inference=True, minibatch_size=1)[0]
@@ -71,13 +76,20 @@ def evaluate(student, val, dev, res, n=40):
             continue
         s = torch.median(gt[v] / pz[v]); pa = pz * s
         mr.append(float(torch.median(torch.abs(gt[v] - pa[v]) / gt[v])))
+        for k, (lo, hi) in split.items():
+            b = v & (gt >= lo) & (gt < hi)
+            if b.sum() > 100:
+                sp[k].append(float(torch.median(torch.abs(gt[b] - pa[b]) / gt[b])))
         gv, pv = gt[v].cpu().numpy(), pz[v].cpu().numpy()
         if gv.std() > 1e-6 and pv.std() > 1e-6:
             corr.append(float(np.corrcoef(gv, pv)[0, 1]))
     student.train()
-    return {"median_absrel": round(float(np.nanmean(mr)), 4),
-            "pearson": round(float(np.nanmean(corr)), 4) if corr else float("nan"),
-            "n": len(mr)}
+    out = {"median_absrel": round(float(np.nanmean(mr)), 4),
+           "pearson": round(float(np.nanmean(corr)), 4) if corr else float("nan"),
+           "n": len(mr)}
+    for k in split:
+        out[f"absrel_{k}"] = round(float(np.nanmean(sp[k])), 4) if sp[k] else float("nan")
+    return out
 
 
 def main():
@@ -92,6 +104,8 @@ def main():
     ap.add_argument("--lr", type=float, default=1e-4)
     ap.add_argument("--nav", type=float, default=0.0, help="M1 nav-weight alpha (in-domain)")
     ap.add_argument("--eval-every", type=int, default=500)
+    ap.add_argument("--save_every", type=int, default=0,
+                    help="also snapshot the checkpoint every N steps (0 = final only)")
     args = ap.parse_args()
     dev = "cuda"
     student = build_student(size="base", aat_depth=8, device="cpu")
@@ -120,6 +134,15 @@ def main():
             print(f"[ft] step {step} loss {loss.item():.4f}", flush=True)
         if step > 0 and step % args.eval_every == 0:
             print(f"[ft] step {step} eval:", evaluate(student, val, dev, args.res), flush=True)
+            if args.save_every and step % args.save_every == 0:
+                # Depth quality is not monotone in training here: at 3000 steps the map
+                # blocks 18% of a clear route, at 6000 41%, at 8000 59%, while whole-frame
+                # accuracy keeps improving. Snapshots let the step count be chosen by the
+                # offline map gate instead of by the loss.
+                sp = args.out.replace(".pt", f"_s{step}.pt")
+                torch.save({"state_dict": student.state_dict(), "size": "base",
+                            "aat_depth": 8}, sp)
+                print(f"[ft] snapshot {sp}", flush=True)
     print("[ft] final eval:", evaluate(student, val, dev, args.res), flush=True)
     torch.save({"state_dict": student.state_dict(), "size": "base", "aat_depth": 8}, args.out)
     print(f"=== FT_DONE {args.out} ===", flush=True)

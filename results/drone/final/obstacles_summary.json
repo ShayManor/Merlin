@@ -1,0 +1,29 @@
+{
+  "n0_blind": {
+    "n": 18,
+    "success": 1.0,
+    "spl": 1.0,
+    "collisions": 0.0,
+    "crashes": 0,
+    "novel_hits": 0,
+    "stalls": 0
+  },
+  "n0_gt": {
+    "n": 18,
+    "success": 1.0,
+    "spl": 1.0,
+    "collisions": 0.0,
+    "crashes": 0,
+    "novel_hits": 0,
+    "stalls": 0
+  },
+  "n0_student": {
+    "n": 18,
+    "success": 1.0,
+    "spl": 1.0,
+    "collisions": 0.0,
+    "crashes": 0,
+    "novel_hits": 0,
+    "stalls": 0
+  }
+}

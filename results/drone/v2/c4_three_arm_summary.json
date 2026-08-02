@@ -1,0 +1,17 @@
+{
+  "blind": {
+    "n": 48,
+    "success": 1.0,
+    "coll_per_m": 0.1652
+  },
+  "student": {
+    "n": 48,
+    "success": 0.6042,
+    "coll_per_m": 0.1537
+  },
+  "gt": {
+    "n": 48,
+    "success": 0.5,
+    "coll_per_m": 0.2977
+  }
+}

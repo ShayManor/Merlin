@@ -1,0 +1,56 @@
+{
+  "n0_blind": {
+    "n": 18,
+    "success": 0.444,
+    "spl": 0.444,
+    "collisions": 0.556,
+    "crashes": 10,
+    "novel_hits": 0,
+    "stalls": 0
+  },
+  "n0_student": {
+    "n": 18,
+    "success": 0.278,
+    "spl": 0.277,
+    "collisions": 0.556,
+    "crashes": 10,
+    "novel_hits": 0,
+    "stalls": 5
+  },
+  "n0_gt": {
+    "n": 18,
+    "success": 0.444,
+    "spl": 0.444,
+    "collisions": 0.556,
+    "crashes": 10,
+    "novel_hits": 0,
+    "stalls": 2
+  },
+  "n1_blind": {
+    "n": 18,
+    "success": 0.333,
+    "spl": 0.333,
+    "collisions": 0.667,
+    "crashes": 12,
+    "novel_hits": 2,
+    "stalls": 0
+  },
+  "n1_student": {
+    "n": 18,
+    "success": 0.0,
+    "spl": 0.0,
+    "collisions": 0.667,
+    "crashes": 12,
+    "novel_hits": 3,
+    "stalls": 10
+  },
+  "n1_gt": {
+    "n": 18,
+    "success": 0.278,
+    "spl": 0.278,
+    "collisions": 0.556,
+    "crashes": 10,
+    "novel_hits": 3,
+    "stalls": 3
+  }
+}

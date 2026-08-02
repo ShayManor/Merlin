@@ -1,0 +1,83 @@
+{
+  "r252_s0.5": {
+    "n": 12,
+    "success": 0.667,
+    "collisions": 0.75,
+    "spl": 0.667,
+    "mean_age": 0.0,
+    "mean_speed": 0.246,
+    "blind_dist": 0.0
+  },
+  "r252_s1.0": {
+    "n": 12,
+    "success": 0.75,
+    "collisions": 1.0,
+    "spl": 0.75,
+    "mean_age": 0.0,
+    "mean_speed": 0.475,
+    "blind_dist": 0.0
+  },
+  "r252_s2.0": {
+    "n": 12,
+    "success": 0.75,
+    "collisions": 1.583,
+    "spl": 0.75,
+    "mean_age": 0.0,
+    "mean_speed": 0.749,
+    "blind_dist": 0.0
+  },
+  "r378_s0.5": {
+    "n": 12,
+    "success": 0.75,
+    "collisions": 0.5,
+    "spl": 0.75,
+    "mean_age": 0.051,
+    "mean_speed": 0.274,
+    "blind_dist": 0.014
+  },
+  "r378_s1.0": {
+    "n": 12,
+    "success": 0.75,
+    "collisions": 0.917,
+    "spl": 0.75,
+    "mean_age": 0.053,
+    "mean_speed": 0.482,
+    "blind_dist": 0.027
+  },
+  "r378_s2.0": {
+    "n": 12,
+    "success": 0.833,
+    "collisions": 0.333,
+    "spl": 0.833,
+    "mean_age": 0.054,
+    "mean_speed": 0.848,
+    "blind_dist": 0.045
+  },
+  "r518_s0.5": {
+    "n": 12,
+    "success": 0.667,
+    "collisions": 0.25,
+    "spl": 0.667,
+    "mean_age": 0.062,
+    "mean_speed": 0.239,
+    "blind_dist": 0.014
+  },
+  "r518_s1.0": {
+    "n": 12,
+    "success": 0.667,
+    "collisions": 0.583,
+    "spl": 0.667,
+    "mean_age": 0.071,
+    "mean_speed": 0.427,
+    "blind_dist": 0.03
+  },
+  "r518_s2.0": {
+    "n": 12,
+    "success": 0.833,
+    "collisions": 0.333,
+    "spl": 0.833,
+    "mean_age": 0.066,
+    "mean_speed": 0.83,
+    "blind_dist": 0.053
+  }
+}

@@ -235,3 +235,9 @@ log.md
 
 # Playwright MCP scratch (scraped pages, not project files)
 .playwright-mcp/
+
+# subagent-driven-development scratch
+.superpowers/
+
+# Raw per-episode frame dumps (regenerable via eval/drone/replay.py capture)
+results/drone/**/frames/frames_*.npz
