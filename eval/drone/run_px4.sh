@@ -9,10 +9,15 @@
 # Instance id (arg 1, default 0) offsets the MAVLink port to 14540+i and gives the instance
 # its own rootfs, so concurrent PX4 jobs on one node do not fight over UDP 14540.
 set -e
-WS=/scratch/gautschi/manors/merlin_drone
+WS=${MERLIN_WS:-/scratch/gautschi/manors/merlin_drone}
 I=${1:-0}
 B=$WS/px4/build/px4_sitl_default
 RD=$B/rootfs_$I; mkdir -p "$RD"
+# MERLIN_PX4_NATIVE=1 runs the binary directly, for hosts where we have root and built PX4
+# against the system libs. The container below exists only because Gautschi has no root.
+if [ "${MERLIN_PX4_NATIVE:-0}" = "1" ]; then
+  cd "$RD" && PX4_SIM_MODEL=sihsim_quadx exec "$B/bin/px4" -i "$I" -d "$B/etc"
+fi
 LD_PRELOAD= BASH_ENV= apptainer exec --cleanenv --bind /scratch/gautschi/manors \
   "$WS/images/px4sim.sif" bash -c \
   "unset LD_PRELOAD; cd $RD && PX4_SIM_MODEL=sihsim_quadx exec $B/bin/px4 -i $I -d $B/etc"

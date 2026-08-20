@@ -8,6 +8,7 @@ metric scale comes from the IMU visual-inertial solve (eval/drone/vi.vi_scale), 
 per-episode GT-depth align. set_scale() lets a caller inject a known scale (e.g. a GT
 upper-bound arm); calibrate_from_imu() recovers it from the first keyframes + PX4 IMU.
 """
+import json
 import os
 import sys
 import tempfile
@@ -77,6 +78,92 @@ class Perception:
         self.model = build_student(size=ck.get("size", "base"),
                                    aat_depth=aat_depth or ck.get("aat_depth", 8),
                                    device="cpu")
+        # An ORE checkpoint carries OREResidual sub-modules at the wrapped sites, so the plain
+        # student's key set will not match it. Rebuild the same wrapping from the metadata the
+        # checkpoint records before loading, and re-register the frozen-feature routing hook if
+        # the run used it -- without that hook every site raises for a missing routing feature.
+        if ck.get("arm") == "ORE" and ck.get("sites"):
+            import sys as _sys
+            _sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                             "..", "..", "model"))
+            from moe.ore import upcycle_ore, set_route_feature
+            rd = int(ck.get("route_dim") or 0)
+            if not rd:
+                # run_cell.py's post-loop save omits route_dim (and step), so a completed run's
+                # untagged checkpoint carries None even though it was trained with frozen-feature
+                # routing. Recover it from the gate: gate.weight is (K, gate_in), and gate_in is
+                # route_dim when routing on a frozen feature and the site's own d_in otherwise.
+                # Ambiguity to respect: a single (K, 768) gate could equally be route_dim=768 or an
+                # fc1 site with route_dim=0. Frozen-feature routing gives EVERY site the same gate
+                # input, whereas per-site routing gives fc1 768 and fc2 3072, so agreement across
+                # all gates is what distinguishes them.
+                widths = {v.shape[1] for k, v in ck["state_dict"].items()
+                          if k.endswith(".gate.weight") and v.shape[0] == int(ck["k"])}
+                if len(widths) == 1:
+                    rd = widths.pop()
+                    print(f"[perception] route_dim missing from checkpoint, inferred {rd} "
+                          f"from {len(ck['sites'])} agreeing gates", flush=True)
+            upcycle_ore(self.model, ck["sites"], num_experts=int(ck["k"]), rank=int(ck["rank"]),
+                        n_layers=int(ck.get("n_layers", 2)), route_dim=rd)
+            if rd:
+                blk0 = self.model.info_sharing.self_attention_blocks[0]
+                blk0.register_forward_pre_hook(
+                    lambda m, i: set_route_feature(self.model, i[0].detach()))
+            print(f"[perception] ORE checkpoint: K={ck['k']} r={ck['rank']} route_dim={rd}, "
+                  f"{len(ck['sites'])} sites", flush=True)
+        elif ck.get("arm") == "U" and ck.get("sites"):
+            # Full-FFN upcycling (L-FCR-02). Same rebuild-before-load problem as ORE, plus one
+            # that ORE does not have: arm U's FORWARD depends on top_k and council_m, and
+            # checkpoints written before 2026-08-14 record neither. Loading a top-2 checkpoint
+            # as top-1 evaluates a DIFFERENT FUNCTION and would look like a real C4 result, so
+            # this reads the sidecar JSON and refuses to guess.
+            import sys as _sys
+            _sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                             "..", "..", "model"))
+            from moe.ffn_moe import upcycle_ffn
+            from moe.ore import set_route_feature
+            tk, cm = ck.get("top_k"), ck.get("council_m")
+            if tk is None:
+                side = os.path.splitext(ckpt)[0] + ".json"
+                base = side.split("_step")[0] + ".json" if "_step" in side else side
+                for cand in (side, base):
+                    if os.path.exists(cand):
+                        j = json.load(open(cand))
+                        tk, cm = j.get("top_k"), j.get("council_m")
+                        print(f"[perception] top_k/council_m missing from checkpoint, read "
+                              f"{tk}/{cm} from {os.path.basename(cand)}", flush=True)
+                        break
+            if tk is None:
+                raise ValueError(
+                    f"{ckpt} is an arm-U checkpoint with no top_k recorded and no sidecar JSON "
+                    "beside it. Running it at the wrong top_k silently evaluates a different "
+                    "model; copy the run's .json next to the checkpoint instead of guessing.")
+            upcycle_ffn(self.model, ck["sites"], num_experts=int(ck["k"]), top_k=int(tk),
+                        council_m=int(cm or 0), route_dim=int(ck.get("route_dim") or 0))
+            if ck.get("route_dim"):
+                blk0 = self.model.info_sharing.self_attention_blocks[0]
+                blk0.register_forward_pre_hook(
+                    lambda m, i: set_route_feature(self.model, i[0].detach()))
+            print(f"[perception] upcycled checkpoint: K={ck['k']} top_k={tk} council={cm or 0}, "
+                  f"{len(ck['sites'])} sites", flush=True)
+        elif ck.get("ffn_widen"):
+            # Rebuild the widened AAT FFNs. The widths come from the CHECKPOINT'S OWN SHAPES
+            # rather than from the ffn_widen metadata: the tensor is the ground truth, and a
+            # metadata/tensor mismatch would otherwise surface as a confusing strict-load error.
+            # Only info_sharing is widened (run_cell.widen_ffn touches those 16 Linears); the
+            # encoder blocks keep their 3072 hidden dim, so this must not loop over them.
+            # No function-preserving init needed here -- every weight is overwritten by the load.
+            import torch.nn as _nn
+            sd = ck["state_dict"]
+            for i, blk in enumerate(self.model.info_sharing.self_attention_blocks):
+                pre = f"info_sharing.self_attention_blocks.{i}.mlp"
+                hid, din = sd[f"{pre}.fc1.weight"].shape
+                dout = sd[f"{pre}.fc2.weight"].shape[0]
+                blk.mlp.fc1 = _nn.Linear(din, hid, bias=f"{pre}.fc1.bias" in sd)
+                blk.mlp.fc2 = _nn.Linear(hid, dout, bias=f"{pre}.fc2.bias" in sd)
+            print(f"[perception] widened checkpoint: AAT FFN hidden {hid} "
+                  f"(+{ck['ffn_widen']}), {len(self.model.info_sharing.self_attention_blocks)} "
+                  f"blocks", flush=True)
         self.model.load_state_dict(ck["state_dict"])
         self.model = self.model.to(device).eval()
         self.device = device
@@ -212,3 +299,187 @@ class Perception:
         (see sharpen_edges). Returns (H,W) float."""
         d = self.apply_depth_calib(self._raw_depth(rgb, res, aat_depth) * self.scale)
         return sharpen_edges(d, calib)
+
+
+class TeacherPerception:
+    """The undistilled MapAnything backbone behind Perception's interface.
+
+    The student is a distilled copy of this architecture, so `_forward` and everything
+    downstream of it -- image loading, the pts3d_cam read, GT scale calibration, the depth
+    calibration table -- are identical. Only the weights and their cost differ, which is
+    exactly what a C4 arm comparison should isolate: the closed-loop question is whether the
+    top-of-line model actually navigates better, not whether it reconstructs better offline.
+
+    Implemented by borrowing Perception's methods rather than subclassing its __init__, since
+    that loads a distilled checkpoint from disk and this loads pretrained weights from the hub.
+    """
+
+    _forward = Perception._forward
+    _raw_depth = Perception._raw_depth
+    depth_and_pose = Perception.depth_and_pose
+    # same architecture and the same (model, device, _tmp, _load_images) attributes, so the
+    # windowed pose forward is borrowed verbatim rather than reimplemented
+    forward_window = Perception.forward_window
+    set_depth_calib = Perception.set_depth_calib
+    apply_depth_calib = Perception.apply_depth_calib
+    set_scale = Perception.set_scale
+    calibrate_gt = Perception.calibrate_gt
+    depth_gt_scaled = Perception.depth_gt_scaled
+    depth = Perception.depth
+
+    def __init__(self, hf_id="facebook/map-anything-apache", device="cuda"):
+        import cv2  # noqa
+        from mapanything.models import MapAnything
+        from mapanything.utils.image import load_images
+        self.model = MapAnything.from_pretrained(hf_id).to(device).eval()
+        self.device = device
+        self.scale = 1.0
+        self.calib_tab = None
+        self.calib_q = 0.20
+        self._tmp = tempfile.NamedTemporaryFile(suffix=".png", delete=False).name
+        self._load_images = load_images
+
+
+
+
+class DepthAnythingPerception:
+    """Depth Anything V2 (metric) behind Perception's interface, as a C4 arm.
+
+    The strongest independently-authored monocular depth model that runs on the Nano, and the
+    one baseline whose CAPABILITY was unmeasured while its throughput was: the SWaP-C table had
+    it at 13.97 FPS with no idea whether it can actually navigate.
+
+    It emits depth only, no relative pose, which is why it cannot replace MERLIN in the full
+    system -- but the C4 planner consumes only depth, so as a navigation arm the comparison is
+    exact. Scale is handled by the same per-episode GT calibration every other arm uses, so an
+    arm cannot win or lose on scale recovery here.
+    """
+
+    set_depth_calib = Perception.set_depth_calib
+    apply_depth_calib = Perception.apply_depth_calib
+    set_scale = Perception.set_scale
+
+    def __init__(self, hf_id="depth-anything/Depth-Anything-V2-Metric-Indoor-Small-hf",
+                 device="cuda"):
+        import torch as _t
+        from transformers import AutoImageProcessor, AutoModelForDepthEstimation
+        self._t = _t
+        self.proc = AutoImageProcessor.from_pretrained(hf_id)
+        self.model = AutoModelForDepthEstimation.from_pretrained(hf_id).to(device).eval()
+        self.device = device
+        self.scale = 1.0
+        self.calib_tab = None
+        self.calib_q = 0.20
+
+    def _raw_depth(self, rgb, res, aat_depth=None):
+        import numpy as _np
+        with self._t.no_grad():
+            inp = self.proc(images=rgb, return_tensors="pt").to(self.device)
+            d = self.model(**inp).predicted_depth
+            d = self._t.nn.functional.interpolate(d[:, None], size=(res, res),
+                                                  mode="bilinear", align_corners=False)
+        return d[0, 0].float().cpu().numpy().astype(_np.float32)
+
+    def calibrate_gt(self, rgb, gt_depth, res=378):
+        """Same median-ratio calibration the student uses, so scale is not the variable."""
+        import numpy as _np
+        import cv2
+        p = self._raw_depth(rgb, res)
+        g = gt_depth
+        if g.shape != p.shape:
+            g = cv2.resize(g, (p.shape[1], p.shape[0]), interpolation=cv2.INTER_NEAREST)
+        v = _np.isfinite(g) & _np.isfinite(p) & (g > 0.1) & (g < 10) & (p > 0.05)
+        self.scale = float(_np.median(g[v] / p[v])) if v.sum() > 200 else 1.0
+        return self.scale
+
+    def depth(self, rgb, res=378, aat_depth=None, calib=0):
+        d = self._raw_depth(rgb, res) * self.scale
+        return self.apply_depth_calib(d) if self.calib_tab is not None else d
+
+
+class VGGTPerception:
+    """VGGT (Visual Geometry Grounded Transformer, CVPR 2025) behind Perception's interface.
+
+    The fair top-of-line baseline: VGGT is MERLIN's own model class -- a feed-forward
+    transformer that outputs depth AND camera pose from images -- unlike a depth-only network,
+    which the C4 harness would silently hand the pose and scale it cannot itself produce. VGGT
+    is up-to-scale, so it takes the same per-episode GT scale calibration the student does; the
+    comparison is then depth SHAPE at matched scale, exactly as for the student and teacher.
+
+    ~1B parameters, so like MapAnything it is a top-of-line point that does not deploy on the
+    Nano; that is measured separately, not assumed.
+    """
+
+    set_depth_calib = Perception.set_depth_calib
+    apply_depth_calib = Perception.apply_depth_calib
+    set_scale = Perception.set_scale
+
+    def __init__(self, hf_id="facebook/VGGT-1B-Commercial", device="cuda"):
+        import cv2  # noqa
+        import torch as _t
+        from vggt.models.vggt import VGGT
+        from vggt.utils.load_fn import load_and_preprocess_images
+        self._t = _t
+        self._load = load_and_preprocess_images
+        self.model = VGGT.from_pretrained(hf_id).to(device).eval()
+        self.device = device
+        self.scale = 1.0
+        self.calib_tab = None
+        self.calib_q = 0.20
+        self._tmp = tempfile.NamedTemporaryFile(suffix=".png", delete=False).name
+
+    def _raw_depth(self, rgb, res, aat_depth=None):
+        import cv2
+        import numpy as _np
+        cv2.imwrite(self._tmp, cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR))
+        imgs = self._load([self._tmp]).to(self.device)
+        with self._t.no_grad(), self._t.autocast("cuda", dtype=self._t.bfloat16):
+            tok, ps = self.model.aggregator(imgs[None])
+            depth_map, _ = self.model.depth_head(tok, imgs[None], ps)
+        d = depth_map[0, 0, ..., 0].float().cpu().numpy()
+        if d.shape != (res, res):
+            d = cv2.resize(d, (res, res), interpolation=cv2.INTER_NEAREST)
+        return d.astype(_np.float32)
+
+    def forward_window(self, rgbs, res=378):
+        """Windowed VGGT pose, unpacked to the SAME convention MapAnything's forward_window
+        returns: camera centres and orientations in the window's first-frame camera frame,
+        quats xyzw. VGGT's camera head emits a world->camera extrinsic whose world IS frame 0,
+        so the only work is inverting each pose; nothing is re-estimated here.
+        """
+        import cv2
+        import numpy as _np
+        from scipy.spatial.transform import Rotation
+        from vggt.utils.pose_enc import pose_encoding_to_extri_intri
+        paths = []
+        for i, rgb in enumerate(rgbs):
+            p = f"{self._tmp[:-4]}_w{i}.png"
+            cv2.imwrite(p, cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR))
+            paths.append(p)
+        imgs = self._load(paths).to(self.device)
+        with self._t.no_grad(), self._t.autocast("cuda", dtype=self._t.bfloat16):
+            tok, ps = self.model.aggregator(imgs[None])
+            pose_enc = self.model.camera_head(tok)[-1]
+        extr, _ = pose_encoding_to_extri_intri(pose_enc.float(), imgs.shape[-2:])
+        extr = extr[0].float().cpu().numpy()          # (N,3,4), world->cam, world = frame 0
+        trans, quats = [], []
+        for E in extr:
+            Rc2w = E[:3, :3].T                        # cam -> frame0
+            trans.append(-Rc2w @ E[:3, 3])            # camera centre in frame-0 coords
+            quats.append(Rotation.from_matrix(Rc2w).as_quat())   # xyzw
+        return _np.array(trans), _np.array(quats)
+
+    def calibrate_gt(self, rgb, gt_depth, res=378):
+        import numpy as _np
+        import cv2
+        p = self._raw_depth(rgb, res)
+        g = gt_depth
+        if g.shape != p.shape:
+            g = cv2.resize(g, (p.shape[1], p.shape[0]), interpolation=cv2.INTER_NEAREST)
+        v = _np.isfinite(g) & _np.isfinite(p) & (g > 0.1) & (g < 10) & (p > 0.05)
+        self.scale = float(_np.median(g[v] / p[v])) if v.sum() > 200 else 1.0
+        return self.scale
+
+    def depth(self, rgb, res=378, aat_depth=None, calib=0):
+        d = self._raw_depth(rgb, res) * self.scale
+        return self.apply_depth_calib(d) if self.calib_tab is not None else d

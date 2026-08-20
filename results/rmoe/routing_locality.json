@@ -1,0 +1,242 @@
+{
+  "rgbd_dataset_freiburg1_desk|k8|s1": {
+    "range": {
+      "ws_mean": 7.3625,
+      "ws_frac": 0.9203125,
+      "reuse": 0.9934270199307792,
+      "fetch": 0.045112781954887216
+    },
+    "appear": {
+      "ws_mean": 1.5625,
+      "ws_frac": 0.1953125,
+      "reuse": 0.9603174603174603,
+      "fetch": 0.08020050125313283
+    },
+    "balanced": {
+      "ws_mean": 8.0,
+      "ws_frac": 1.0,
+      "reuse": 1.0,
+      "fetch": 0.0
+    }
+  },
+  "rgbd_dataset_freiburg1_desk|k8|s6": {
+    "range": {
+      "ws_mean": 7.373134328358209,
+      "ws_frac": 0.9216417910447762,
+      "reuse": 0.9686147186147186,
+      "fetch": 0.22727272727272727
+    },
+    "appear": {
+      "ws_mean": 2.9402985074626864,
+      "ws_frac": 0.3675373134328358,
+      "reuse": 0.9368686868686869,
+      "fetch": 0.19696969696969696
+    },
+    "balanced": {
+      "ws_mean": 8.0,
+      "ws_frac": 1.0,
+      "reuse": 1.0,
+      "fetch": 0.0
+    }
+  },
+  "rgbd_dataset_freiburg1_desk|k32|s1": {
+    "range": {
+      "ws_mean": 26.42,
+      "ws_frac": 0.825625,
+      "reuse": 0.9834865916862917,
+      "fetch": 0.40100250626566414
+    },
+    "appear": {
+      "ws_mean": 2.0,
+      "ws_frac": 0.0625,
+      "reuse": 1.0,
+      "fetch": 0.0
+    },
+    "balanced": {
+      "ws_mean": 32.0,
+      "ws_frac": 1.0,
+      "reuse": 1.0,
+      "fetch": 0.0
+    }
+  },
+  "rgbd_dataset_freiburg1_desk|k32|s6": {
+    "range": {
+      "ws_mean": 26.388059701492537,
+      "ws_frac": 0.8246268656716418,
+      "reuse": 0.9477743964506229,
+      "fetch": 1.303030303030303
+    },
+    "appear": {
+      "ws_mean": 2.8507462686567164,
+      "ws_frac": 0.08908582089552239,
+      "reuse": 0.9722222222222223,
+      "fetch": 0.07575757575757576
+    },
+    "balanced": {
+      "ws_mean": 32.0,
+      "ws_frac": 1.0,
+      "reuse": 1.0,
+      "fetch": 0.0
+    }
+  },
+  "rgbd_dataset_freiburg1_room|k8|s1": {
+    "range": {
+      "ws_mean": 7.3625,
+      "ws_frac": 0.9203125,
+      "reuse": 0.9926303854875285,
+      "fetch": 0.045112781954887216
+    },
+    "appear": {
+      "ws_mean": 2.45,
+      "ws_frac": 0.30625,
+      "reuse": 0.9678362573099416,
+      "fetch": 0.08020050125313283
+    },
+    "balanced": {
+      "ws_mean": 8.0,
+      "ws_frac": 1.0,
+      "reuse": 1.0,
+      "fetch": 0.0
+    }
+  },
+  "rgbd_dataset_freiburg1_room|k8|s6": {
+    "range": {
+      "ws_mean": 7.373134328358209,
+      "ws_frac": 0.9216417910447762,
+      "reuse": 0.9745670995670995,
+      "fetch": 0.18181818181818182
+    },
+    "appear": {
+      "ws_mean": 1.0,
+      "ws_frac": 0.125,
+      "reuse": 1.0,
+      "fetch": 0.0
+    },
+    "balanced": {
+      "ws_mean": 8.0,
+      "ws_frac": 1.0,
+      "reuse": 1.0,
+      "fetch": 0.0
+    }
+  },
+  "rgbd_dataset_freiburg1_room|k32|s1": {
+    "range": {
+      "ws_mean": 26.8525,
+      "ws_frac": 0.839140625,
+      "reuse": 0.9845503571032943,
+      "fetch": 0.3433583959899749
+    },
+    "appear": {
+      "ws_mean": 2.015,
+      "ws_frac": 0.06296875,
+      "reuse": 0.9924812030075187,
+      "fetch": 0.017543859649122806
+    },
+    "balanced": {
+      "ws_mean": 32.0,
+      "ws_frac": 1.0,
+      "reuse": 1.0,
+      "fetch": 0.0
+    }
+  },
+  "rgbd_dataset_freiburg1_room|k32|s6": {
+    "range": {
+      "ws_mean": 26.91044776119403,
+      "ws_frac": 0.8409514925373134,
+      "reuse": 0.9577940592318375,
+      "fetch": 1.0151515151515151
+    },
+    "appear": {
+      "ws_mean": 3.8656716417910446,
+      "ws_frac": 0.12080223880597014,
+      "reuse": 0.9694444444444444,
+      "fetch": 0.12121212121212122
+    },
+    "balanced": {
+      "ws_mean": 32.0,
+      "ws_frac": 1.0,
+      "reuse": 1.0,
+      "fetch": 0.0
+    }
+  },
+  "rgbd_dataset_freiburg2_desk|k8|s1": {
+    "range": {
+      "ws_mean": 7.9375,
+      "ws_frac": 0.9921875,
+      "reuse": 0.99968671679198,
+      "fetch": 0.002506265664160401
+    },
+    "appear": {
+      "ws_mean": 1.0,
+      "ws_frac": 0.125,
+      "reuse": 1.0,
+      "fetch": 0.0
+    },
+    "balanced": {
+      "ws_mean": 8.0,
+      "ws_frac": 1.0,
+      "reuse": 1.0,
+      "fetch": 0.0
+    }
+  },
+  "rgbd_dataset_freiburg2_desk|k8|s6": {
+    "range": {
+      "ws_mean": 7.925373134328358,
+      "ws_frac": 0.9906716417910447,
+      "reuse": 0.9981060606060606,
+      "fetch": 0.015151515151515152
+    },
+    "appear": {
+      "ws_mean": 1.2985074626865671,
+      "ws_frac": 0.1623134328358209,
+      "reuse": 0.9621212121212122,
+      "fetch": 0.07575757575757576
+    },
+    "balanced": {
+      "ws_mean": 8.0,
+      "ws_frac": 1.0,
+      "reuse": 1.0,
+      "fetch": 0.0
+    }
+  },
+  "rgbd_dataset_freiburg2_desk|k32|s1": {
+    "range": {
+      "ws_mean": 30.985,
+      "ws_frac": 0.96828125,
+      "reuse": 0.9971864798258159,
+      "fetch": 0.08771929824561403
+    },
+    "appear": {
+      "ws_mean": 2.8175,
+      "ws_frac": 0.088046875,
+      "reuse": 0.9734753550543024,
+      "fetch": 0.08270676691729323
+    },
+    "balanced": {
+      "ws_mean": 32.0,
+      "ws_frac": 1.0,
+      "reuse": 1.0,
+      "fetch": 0.0
+    }
+  },
+  "rgbd_dataset_freiburg2_desk|k32|s6": {
+    "range": {
+      "ws_mean": 30.940298507462686,
+      "ws_frac": 0.9668843283582089,
+      "reuse": 0.9946958461140886,
+      "fetch": 0.16666666666666666
+    },
+    "appear": {
+      "ws_mean": 2.0,
+      "ws_frac": 0.0625,
+      "reuse": 1.0,
+      "fetch": 0.0
+    },
+    "balanced": {
+      "ws_mean": 32.0,
+      "ws_frac": 1.0,
+      "reuse": 1.0,
+      "fetch": 0.0
+    }
+  }
+}

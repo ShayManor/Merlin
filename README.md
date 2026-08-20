@@ -14,7 +14,8 @@ turning one monocular RGB stream into metric depth + pose for closed-loop indoor
 | **Fidelity** | 0.178 abs_rel vs the teacher; the residual is the 230M-vs-1.23B capacity gap. |
 | **Metric scale** | 0.4-1.3% error via a *decoupled* VI front end (the student is a poor ego-motion estimator). |
 | **Drift** | A 9-axis IMU bounds drift to ~1.5-2%, but indoors needs a visual yaw reference, not the magnetometer. |
-| **Navigation** | Reactive indoor nav is planner-bound, not perception-bound: the student saturates the perception bar (a perfect-depth oracle navigates *worse*), so nav-aware distillation and anytime elasticity both buy nothing — run the cheapest op point. |
+| **Navigation** | 0.847 goal success avoiding obstacles the planned route does not know about (sim, n=240, five object classes at a selected orientation), against 0.003 with no map and 1.000 with perfect depth. |
+| **What nav needs** | Depends on what binds. With no novel obstacles the planner binds, and a perfect-depth oracle navigates *worse* by over-braking. Once the route is genuinely blocked, perception binds and perfect depth is a strict ceiling. |
 
 ## Run
 ```bash

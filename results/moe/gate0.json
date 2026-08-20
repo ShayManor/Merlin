@@ -1,0 +1,33 @@
+{
+  "modes": {
+    "MAXN_SUPER": {
+      "tops": 11.760967202941734,
+      "gbs": 79.83727221370096,
+      "achieved_ridge": 147.311736446369,
+      "threshold_tops": 29.100685721894,
+      "frac_of_threshold": 0.404147425092919,
+      "vanilla_penalty": 1.0,
+      "residual_penalty": 1.0520833333333335
+    },
+    "25W": {
+      "tops": 9.281712138648778,
+      "gbs": 57.87640847526425,
+      "achieved_ridge": 160.3712528674906,
+      "threshold_tops": 21.09595088923382,
+      "frac_of_threshold": 0.4399760023799467,
+      "vanilla_penalty": 1.0,
+      "residual_penalty": 1.0520833333333333
+    },
+    "15W": {
+      "tops": 7.454832558200015,
+      "gbs": 52.58065418350419,
+      "achieved_ridge": 141.7789997854149,
+      "threshold_tops": 19.16564844988728,
+      "frac_of_threshold": 0.38896844934270197,
+      "vanilla_penalty": 1.0,
+      "residual_penalty": 1.0520833333333333
+    }
+  },
+  "decision": "kill",
+  "note": "7W discarded: nvpmodel mode 3 requires a reboot and did not apply."
+}

@@ -15,6 +15,7 @@ import numpy as np
 
 from eval.drone.frames import HAB_CAM_TO_OPTICAL
 from eval.drone.mapper import VoxelMap
+from eval.drone.maps import build_map
 from eval.drone.planner import Planner3D
 from eval.drone.staleness import Staleness
 from eval.drone.vi import path_length
@@ -69,8 +70,16 @@ def run_episode(bridge, client, depth_provider, ep, waypoints_ned, cfg):
     # hit_w must be forwarded like carve_w. It was not, so in flight the map always ran
     # symmetric 1:1 evidence while the offline diagnostic swept it -- the same two-mappers,
     # two-conclusions trap that carve_w fell into.
-    vmap = VoxelMap(voxel=cfg.get("voxel", 0.15), min_hits=cfg.get("min_hits", 2),
-                    carve_w=cfg.get("carve_w", 1), hit_w=cfg.get("hit_w", 1))
+    # The planner reaches the map only through any_occupied_within/unknown/voxel, so the
+    # representation is swappable without touching it. Default "voxel" is the counting map,
+    # so every existing cell is unchanged; eval/drone/maps.py holds the benchmark alternatives.
+    vmap = build_map(cfg.get("map", "voxel"),
+                     voxel=cfg.get("voxel", 0.15), min_hits=cfg.get("min_hits", 2),
+                     carve_w=cfg.get("carve_w", 1), hit_w=cfg.get("hit_w", 1),
+                     sigma_table=cfg.get("sigma_table"), l_thresh=cfg.get("l_thresh", 1.2),
+                     k_sigma=cfg.get("k_sigma", 2.0), free_w=cfg.get("free_w", 0.55),
+                     window=cfg.get("window", 12), agree=cfg.get("agree", 1),
+                     risk_k=cfg.get("risk_k", 1.5))
     plan = Planner3D(step=cfg.get("step", 0.4), safety=cfg.get("safety", 0.5),
                      max_speed=cfg.get("max_speed", 1.0), escape=cfg.get("escape", True),
                      require_known=cfg.get("require_known", False),
@@ -96,6 +105,11 @@ def run_episode(bridge, client, depth_provider, ep, waypoints_ned, cfg):
     in_contact = False   # count collision EVENTS (no-hit -> hit), not every grazing tick
     success = False
     rng = np.random.default_rng(cfg.get("noise_seed", 0))
+    # drift is per-episode state (it integrates distance flown), unlike the stateless jitter
+    drift = None
+    if cfg.get("pose_drift") or cfg.get("yaw_drift_deg"):
+        from eval.drone.noise import PoseDrift
+        drift = PoseDrift(cfg.get("pose_drift", 0.0), cfg.get("yaw_drift_deg", 0.0), rng)
     blocked_ticks = 0
     prev_pos = None
     last_vel = None
@@ -147,9 +161,11 @@ def run_episode(bridge, client, depth_provider, ep, waypoints_ned, cfg):
             # the map is normally assembled from PX4 GT pose (perfect odometry); pose_noise
             # degrades that oracle towards the real-rover condition when enabled
             ipos, iR = pos_hab, R_cam2world
+            if drift is not None:
+                ipos, iR = drift.apply(ipos, iR)
             if cfg.get("pose_noise") or cfg.get("rot_noise_deg"):
                 from eval.drone.noise import perturb_pose
-                ipos, iR = perturb_pose(pos_hab, R_cam2world, cfg.get("pose_noise", 0.0),
+                ipos, iR = perturb_pose(ipos, iR, cfg.get("pose_noise", 0.0),
                                         cfg.get("rot_noise_deg", 0.0), rng)
             # iR is the Habitat camera matrix render() was driven with; the map needs the
             # optical convention or the whole point cloud lands behind the drone

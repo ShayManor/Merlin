@@ -1,0 +1,17 @@
+{
+  "_note": "Orin Nano 8GB, MAXN_SUPER, fp16 PyTorch, one AAT MLP site 768->3072->768 over 729 tokens, batch 1. block_m=64 for the fused arms. Captured from stdout on 2026-08-17; the board went offline before the block_m sweep completed, so these are the bm=64 points only.",
+  "device": "Orin", "dtype": "fp16", "tokens": 729, "d": 768, "dh": 3072, "block_m": 64,
+  "parity_fused_vs_loop_relmax": {"U8_top1": 4.92e-4, "U8_top2": 1.34e-3, "U2_top1": 5.28e-4},
+  "site": [
+    {"arm": "dense",     "impl": "dense", "dh": 3072, "ms": 1.123, "graph_ms": 1.094, "vs_dense": 1.00},
+    {"arm": "widen165",  "impl": "dense", "dh": 3237, "ms": 2.519, "graph_ms": 2.388, "vs_dense": 2.24},
+    {"arm": "widen168",  "impl": "dense", "dh": 3240, "ms": 1.100, "graph_ms": 1.168, "vs_dense": 0.98},
+    {"arm": "widen5200", "impl": "dense", "dh": 8272, "ms": 3.186, "graph_ms": 3.127, "vs_dense": 2.84},
+    {"arm": "U8_top1", "impl": "loop",  "k": 8, "top_k": 1, "ms": 7.298, "router_ms": 1.437, "vs_dense": 6.50},
+    {"arm": "U8_top1", "impl": "fused", "k": 8, "top_k": 1, "ms": 2.462, "graph_ms": 1.909, "router_ms": 0.228, "dispatch_ms": 1.784, "slots": 1280, "vs_dense": 2.19},
+    {"arm": "U8_top2", "impl": "loop",  "k": 8, "top_k": 2, "ms": 8.694, "router_ms": 1.455, "vs_dense": 7.74},
+    {"arm": "U8_top2", "impl": "fused", "k": 8, "top_k": 2, "ms": 4.039, "graph_ms": 3.884, "router_ms": 0.420, "dispatch_ms": 1.994, "slots": 1984, "vs_dense": 3.60},
+    {"arm": "U2_top1", "impl": "loop",  "k": 2, "top_k": 1, "ms": 3.383, "router_ms": 1.415, "vs_dense": 3.01},
+    {"arm": "U2_top1", "impl": "fused", "k": 2, "top_k": 1, "ms": 2.484, "graph_ms": 2.133, "router_ms": 0.233, "dispatch_ms": 1.784, "slots": 800, "vs_dense": 2.21}
+  ]
+}

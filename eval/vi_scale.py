@@ -43,12 +43,26 @@ def load_accel(seq):
     return A[:, 0], A[:, 1:4]
 
 
-def integrals_c0(at, av, Rk, t0, t1):
-    """Single + double integral of accel (rotated to c0 via the keyframe rotation Rk) over [t0,t1]."""
+def integrals_c0(at, av, Rk, t0, t1, Rk1=None):
+    """Single + double integral of accel (rotated to c0) over [t0,t1].
+
+    Attitude is interpolated from Rk to Rk1 across the interval. Holding Rk for all of it
+    mis-rotates every sample after t0, so gravity comes off in the wrong direction and the
+    recovered scale degrades with turn rate: 7% at 90 deg/s and 25% at 180 deg/s over a 0.4 s
+    gap, measured with a perfect trajectory and a perfect IMU (eval/drone/vi.py carried the
+    same bug). eval/vi_scale_gt.py never did: it evaluates attitude per sample.
+    """
     m = (at >= t0) & (at <= t1)
     if m.sum() < 2:
         return None
-    ts = at[m]; acc = (Rk @ av[m].T).T            # rotate body accel to c0 frame
+    ts = at[m]
+    if Rk1 is None:
+        acc = (Rk @ av[m].T).T                    # rotate body accel to c0 frame
+    else:
+        from eval.drone.vi import so3_exp, so3_log
+        w = so3_log(Rk.T @ Rk1)
+        u = (ts - t0) / max(t1 - t0, 1e-9)
+        acc = np.array([Rk @ so3_exp(w * ui) @ a for ui, a in zip(u, av[m])])
     si = np.zeros(3); di = np.zeros(3); v = np.zeros(3)
     for i in range(1, len(ts)):
         dt = ts[i] - ts[i-1]; a = 0.5*(acc[i]+acc[i-1])
@@ -94,7 +108,7 @@ def main():
         bad = False
         for k in range(n-1):
             dt = ts[k+1]-ts[k]
-            ii = integrals_c0(at, av, R[k], ts[k], ts[k+1])
+            ii = integrals_c0(at, av, R[k], ts[k], ts[k+1], R[k+1])
             if ii is None: bad = True; break
             si, di = ii
             # velocity rows: -v_k + v_{k+1} + g*dt = si

@@ -33,6 +33,31 @@ def motion_blur(rgb, speed_mps, gain=4.0):
     return np.clip(acc / k, 0, 255).astype(np.uint8)
 
 
+def adjust_brightness(rgb, gain):
+    """Multiplicative exposure change. gain=1 is exactly identity.
+
+    Clipping is deliberate: a real sensor loses the highlights it blows out and the shadow
+    detail it quantises away, so darkening is not losslessly invertible by auto_gain.
+    """
+    if gain <= 0 or gain == 1.0:
+        return rgb
+    out = rgb.astype(np.float32) * float(gain)
+    return np.clip(out, 0, 255).astype(np.uint8)
+
+
+def auto_gain(rgb, target=128.0):
+    """Normalise mean brightness to a fixed set point, i.e. a camera driver's AGC.
+
+    This is the one-line fix the robustness section claims closes the low-light failure
+    mode. It sees only the degraded frame, never the clean one, so it corrects the global
+    exposure without knowing the gain that caused it.
+    """
+    m = float(rgb.astype(np.float32).mean())
+    if m < 1e-6:
+        return rgb
+    return np.clip(rgb.astype(np.float32) * (float(target) / m), 0, 255).astype(np.uint8)
+
+
 def _so3(w):
     t = float(np.linalg.norm(w))
     if t < 1e-12:
@@ -58,6 +83,45 @@ def perturb_pose(pos, R, pos_sigma, rot_sigma_deg, rng):
         w = rng.normal(0.0, np.deg2rad(float(rot_sigma_deg)), 3)
         R = _so3(w) @ R
     return p, R
+
+
+class PoseDrift:
+    """Coherent odometry drift, the error mode perturb_pose does not model.
+
+    perturb_pose is i.i.d. per frame, which BLURS the map. Real VIO error is correlated in
+    time: it shifts the map coherently, and that is the mechanism C3 bounds. Error grows
+    linearly with distance travelled, so a rate of 0.01 /m is exactly C3's "1% of path
+    length" and the levels map onto the target with no conversion. The direction is drawn
+    once per episode and then held, which is what makes the shift coherent rather than a
+    second source of blur.
+    """
+
+    def __init__(self, rate=0.0, yaw_rate_deg=0.0, rng=None):
+        self.rate = float(rate)
+        self.yaw_rate = float(yaw_rate_deg)
+        rng = np.random.default_rng(0) if rng is None else rng
+        u = rng.normal(0.0, 1.0, 3)
+        n = float(np.linalg.norm(u))
+        self.u = u / n if n > 1e-12 else np.array([1.0, 0.0, 0.0])
+        self.yaw_sign = 1.0 if rng.random() < 0.5 else -1.0
+        self.dist = 0.0
+        self._last = None
+
+    def apply(self, pos, R):
+        """Advance the odometer by the distance moved since the last call, then displace."""
+        pos = np.asarray(pos, float)
+        R = np.asarray(R, float)
+        if self.rate <= 0 and self.yaw_rate <= 0:
+            return pos, R
+        if self._last is not None:
+            self.dist += float(np.linalg.norm(pos - self._last))
+        self._last = pos.copy()
+        p = pos + self.rate * self.dist * self.u
+        if self.yaw_rate > 0:
+            # yaw about the Habitat world up axis (+Y), so the drift is a heading error
+            a = self.yaw_sign * np.deg2rad(self.yaw_rate * self.dist)
+            R = _so3(np.array([0.0, a, 0.0])) @ R
+        return p, R
 
 
 def random_depth(shape, rng, lo=0.3, hi=3.0, cells=12):

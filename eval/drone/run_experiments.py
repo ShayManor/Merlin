@@ -19,7 +19,7 @@ import time
 
 import numpy as np
 
-from eval.drone.frames import EpisodeFrame, quat_to_R, frd_acc_to_cam
+from eval.drone.frames import EpisodeFrame, quat_to_R, frd_acc_to_cam, ned_traj_to_cam0
 from eval.drone.metrics import aggregate, boot_ci
 from eval.drone.nav_loop import run_episode
 from eval.drone.px4_bridge import PX4Bridge
@@ -27,6 +27,14 @@ from eval.drone.noise import random_depth
 from eval.drone.perception import Perception, decompress_steps
 from eval.drone.sim_client import SimClient
 from eval.drone.vi import vi_scale, ate, path_length
+
+
+def _sigma_table(path):
+    """Load the measured inverse sensor model, or None to fall back to maps.DEFAULT_SIGMA."""
+    if not path:
+        return None
+    from eval.drone.maps import load_sigma
+    return load_sigma(path)
 
 WS = os.environ.get("MERLIN_WS", "/scratch/gautschi/manors/merlin_drone")
 # Both the renderer socket and PX4's MAVLink port are per-instance, so two jobs co-located on
@@ -38,9 +46,19 @@ PORT = 5601 + PX4_INSTANCE
 def spawn_renderer(port, res):
     sq = (res // 14) * 14
     logf = open(f"{WS}/rend_{port}.log", "w")
+    # The renderer is a DIFFERENT interpreter (habenv, python3.9) from the caller, so it must not
+    # inherit the caller's PYTHONPATH: entries meant for the model env make 3.9 fail to find its
+    # own codecs and it dies with "no codec search functions registered", which surfaces here only
+    # as "could not connect to drone renderer on <port>". Replace the variable for the child with
+    # the repo root alone, which is all it needs to import eval.drone.obstacles.
+    # ~/.local/lib/python3.9/site-packages is on the child's path for the same reason and produces
+    # the identical codec failure, so disable user site too.
+    env = {k: v for k, v in os.environ.items() if k not in ("PYTHONPATH", "PYTHONHOME")}
+    env["PYTHONNOUSERSITE"] = "1"
+    env["PYTHONPATH"] = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     p = subprocess.Popen([WS + "/envs/habenv/bin/python", "eval/drone/renderer.py",
                           "--port", str(port), "--width", str(sq), "--height", str(sq)],
-                         stdout=logf, stderr=subprocess.STDOUT)
+                         stdout=logf, stderr=subprocess.STDOUT, env=env)
     return p
 
 
@@ -98,18 +116,49 @@ def _persist_episode(args, client, ep, m, tag, arm, n_obs, obs_info, wps_hab, pe
                           "max_speed": args.max_speed,
                           "rgb_noise": getattr(args, "rgb_noise", 0.0),
                           "motion_blur": getattr(args, "motion_blur", 0.0),
-                          "pose_noise": getattr(args, "pose_noise", 0.0)}},
+                          "brightness": getattr(args, "brightness", 1.0),
+                          "auto_gain": bool(getattr(args, "auto_gain", False)),
+                          "latency_ms": getattr(args, "latency_ms", None),
+                          "pose_noise": getattr(args, "pose_noise", 0.0),
+                          "rot_noise_deg": getattr(args, "rot_noise_deg", 0.0),
+                          "pose_drift": getattr(args, "pose_drift", 0.0),
+                          "yaw_drift_deg": getattr(args, "yaw_drift_deg", 0.0)}},
               open(f"{d}/{tag}.json", "w"))
 
 
 def _noisy_rgb(args, rgb, rng):
     """Degrade the frame before inference when the realism knobs are on (default: off, so
     this returns the pristine render unchanged)."""
-    if not (getattr(args, "rgb_noise", 0.0) or getattr(args, "motion_blur", 0.0)):
+    gain = getattr(args, "brightness", 1.0)
+    agc = getattr(args, "auto_gain", False)
+    if not (getattr(args, "rgb_noise", 0.0) or getattr(args, "motion_blur", 0.0)
+            or gain != 1.0 or agc):
         return rgb
-    from eval.drone.noise import add_rgb_noise, motion_blur
-    return motion_blur(add_rgb_noise(rgb, getattr(args, "rgb_noise", 0.0), rng),
-                       getattr(args, "motion_blur", 0.0))
+    from eval.drone.noise import add_rgb_noise, motion_blur, adjust_brightness, auto_gain
+    out = motion_blur(add_rgb_noise(adjust_brightness(rgb, gain),
+                                    getattr(args, "rgb_noise", 0.0), rng),
+                      getattr(args, "motion_blur", 0.0))
+    # the AGC sees the already-degraded frame, exactly as the camera driver would on the rover
+    return auto_gain(out) if agc else out
+
+
+def _c2_waypoints(excite=1.0, length=6.0, lat=1.1, vert=0.45):
+    """Collection-flight zigzag for --mode c2.
+
+    excite=1.0 returns the original path verbatim, so existing C2 cells stay comparable.
+    Above 1.0 the SAME envelope is folded into more oscillations rather than made wider:
+    acceleration goes as amplitude times frequency squared, so this buys visual-inertial
+    excitation without needing room the apartment does not have.
+    """
+    if excite == 1.0:
+        return [[1.5, 0, 0], [2.5, 1.2, -0.5], [3.8, -0.6, 0.3], [5.0, 0.9, -0.2], [6.0, 0, 0]]
+    n = max(2, int(round(4 * float(excite))))
+    wps = []
+    for i in range(1, n + 1):
+        s = 1.0 if i % 2 else -1.0
+        last = (i == n)
+        wps.append([length * i / n, 0.0 if last else lat * s, 0.0 if last else -vert * s])
+    return wps
 
 
 def _c4_rows(args, jsonl_path=None, extra=None):
@@ -126,6 +175,11 @@ def _c4_rows(args, jsonl_path=None, extra=None):
         assert bridge.wait_ready(40), "PX4 not ready"
         bridge.configure_sim()
         perc = Perception(args.ckpt) if args.ckpt else None
+        # Built on first use and reused: a 1.2 B-parameter load per episode would dwarf the
+        # flight time and is not what the arm is measuring.
+        _teacher = [None]
+        _da = [None]
+        _vggt = [None]
         if perc is not None and getattr(args, "depth_calib", None):
             perc.set_depth_calib(args.depth_calib, args.calib_q)
         cfg = {"res": args.res, "timeout": args.timeout, "alt": args.alt,
@@ -140,9 +194,18 @@ def _c4_rows(args, jsonl_path=None, extra=None):
                "require_known": getattr(args, "require_known", False),
                "carve_w": getattr(args, "carve_w", 1),
                "hit_w": getattr(args, "hit_w", 1),
+               "map": getattr(args, "map", "voxel"),
+               "sigma_table": _sigma_table(getattr(args, "sigma_model", None)),
+               "l_thresh": getattr(args, "l_thresh", 1.2),
+               "k_sigma": getattr(args, "k_sigma", 2.0),
+               "window": getattr(args, "window_frames", 12),
+               "agree": getattr(args, "agree", 1),
+               "risk_k": getattr(args, "risk_k", 1.5),
                "latency_ms": getattr(args, "latency_ms", None),
                "pose_noise": getattr(args, "pose_noise", 0.0),
-               "rot_noise_deg": getattr(args, "rot_noise_deg", 0.0)}
+               "rot_noise_deg": getattr(args, "rot_noise_deg", 0.0),
+               "pose_drift": getattr(args, "pose_drift", 0.0),
+               "yaw_drift_deg": getattr(args, "yaw_drift_deg", 0.0)}
         for scene in args.scenes:
             client.reset(scene, args.dataset, getattr(args, "nav_radius", None))
             if getattr(args, "save_frames", 0):
@@ -220,6 +283,59 @@ def _c4_rows(args, jsonl_path=None, extra=None):
                             return np.full_like(out["depth"], np.nan)
                     elif arm == "gt":
                         dp = lambda out, r=None: out["depth"]
+                    elif arm == "teacher":
+                        # Top-of-line arm: the undistilled MapAnything backbone driving the
+                        # SAME map and planner as the student, with the same per-episode GT
+                        # scale calibration. This is the end-to-end question the throughput
+                        # numbers cannot answer -- whether paying ~8x the latency and the
+                        # memory budget actually buys closed-loop navigation performance.
+                        if _teacher[0] is None:
+                            from eval.drone.perception import TeacherPerception
+                            _teacher[0] = TeacherPerception(args.teacher_hf)
+                        tp = _teacher[0]
+                        R0 = ep.ned_quat_to_hab_R(np.array([0, 0, 0, 1.0]))
+                        out0 = client.render(ep.ned_to_hab_pos([0, 0, 0]), R0)
+                        tp.calibrate_gt(out0["rgb"], out0["depth"], res=args.res)
+                        dp = lambda out, r=args.res, _t=tp: _t.depth(out["rgb"], res=r)
+                    elif arm == "vggt":
+                        # Fair top-of-line baseline: same output class as MERLIN (depth+pose),
+                        # up-to-scale so it takes the same per-episode GT calibration. ~1B
+                        # params; deployability is measured on the Nano, not assumed here.
+                        if _vggt[0] is None:
+                            if getattr(args, "vggt_libs", None):
+                                sys.path.insert(0, args.vggt_libs)
+                            from eval.drone.perception import VGGTPerception
+                            _vggt[0] = VGGTPerception(args.vggt_hf)
+                        _v = _vggt[0]
+                        R0 = ep.ned_quat_to_hab_R(np.array([0, 0, 0, 1.0]))
+                        out0 = client.render(ep.ned_to_hab_pos([0, 0, 0]), R0)
+                        _v.calibrate_gt(out0["rgb"], out0["depth"], res=args.res)
+                        dp = lambda out, r=args.res, _m=_v: _m.depth(out["rgb"], res=r)
+                    elif arm == "da":
+                        # Independent Jetson-capable baseline. Depth only, no pose, so it
+                        # cannot replace MERLIN in the system -- but the planner consumes only
+                        # depth, so as a navigation arm this is an exact comparison.
+                        if _da[0] is None:
+                            # Added to sys.path HERE, not to PYTHONPATH: the renderer is a
+                            # habenv (python 3.9) subprocess that inherits the environment,
+                            # and cp311 wheels on its path kill it before it can bind its
+                            # port -- which surfaces only as "could not connect to renderer".
+                            if getattr(args, "da_libs", None):
+                                # PREPENDED so this dir's transformers + its pinned
+                                # huggingface-hub win over the env's (the env has hub 1.x for
+                                # MapAnything, which transformers 4.53 rejects). numpy and torch
+                                # are deleted from this dir at build time, so they still resolve
+                                # to the env's CUDA build rather than a shadowing copy. The
+                                # renderer is a separate habenv subprocess and never sees this
+                                # -- it is on sys.path, not PYTHONPATH.
+                                sys.path.insert(0, args.da_libs)
+                            from eval.drone.perception import DepthAnythingPerception
+                            _da[0] = DepthAnythingPerception(args.da_hf)
+                        _d = _da[0]
+                        R0 = ep.ned_quat_to_hab_R(np.array([0, 0, 0, 1.0]))
+                        out0 = client.render(ep.ned_to_hab_pos([0, 0, 0]), R0)
+                        _d.calibrate_gt(out0["rgb"], out0["depth"], res=args.res)
+                        dp = lambda out, r=args.res, _m=_d: _m.depth(out["rgb"], res=r)
                     elif arm == "student_pfs":
                         # oracle per-frame scale: isolates scale error from shape error
                         dp = lambda out, r=args.res: perc.depth_gt_scaled(out["rgb"],
@@ -339,7 +455,24 @@ def run_c2(args):
         bridge = PX4Bridge()
         assert bridge.wait_ready(40), "PX4 not ready"
         bridge.configure_sim()
-        perc = Perception(args.ckpt)
+        # E0a holds the solver, K, the IMU stream and the sequences fixed and varies ONLY the
+        # source of the up-to-scale trajectory. "gt" loads no model at all: it is the control.
+        src = getattr(args, "pose_source", "student")
+        if src == "student":
+            perc = Perception(args.ckpt)
+        elif src == "teacher":
+            from eval.drone.perception import TeacherPerception
+            perc = TeacherPerception(args.teacher_hf)
+        elif src == "vggt":
+            from eval.drone.perception import VGGTPerception
+            perc = VGGTPerception(args.vggt_hf)
+        elif src == "vo":
+            # classical front end: same forward_window signature, so no special case here
+            from eval.vo import VOFrontend
+            perc = VOFrontend()
+        else:
+            perc = None
+        c2rng = np.random.default_rng(getattr(args, "seed0", 1000))
         K = args.window
         rows = []
         for scene in args.scenes:
@@ -351,7 +484,7 @@ def run_c2(args):
                 ep = EpisodeFrame(epinfo["start_hab"], epinfo["yaw_hab"])
                 # a larger zig-zag with altitude change gives more per-keyframe baseline +
                 # acceleration for visual-inertial observability (small motion -> degenerate VO)
-                wps = [[1.5, 0, 0], [2.5, 1.2, -0.5], [3.8, -0.6, 0.3], [5.0, 0.9, -0.2], [6.0, 0, 0]]
+                wps = _c2_waypoints(getattr(args, "c2_excite", 1.0))
                 kfs, imu = fly_and_collect(bridge, client, ep, wps,
                                            {"res": args.res, "alt": 1.0, "kf_dt": 0.4})
                 if len(kfs) < K or imu.shape[0] < 2 * K:
@@ -359,8 +492,19 @@ def run_c2(args):
                 imu_cam = np.array([frd_acc_to_cam(a) for a in imu[:, 1:4]]) if imu.shape[0] else imu
                 for w0 in range(0, len(kfs) - K + 1, max(1, K // 2)):
                     win = kfs[w0:w0 + K]
-                    cam_trans, cam_quats = perc.forward_window([f["rgb"] for f in win], res=args.res)
-                    R_list = [quat_to_R(q) for q in cam_quats]
+                    if perc is None:
+                        cam_trans, R_list = ned_traj_to_cam0([f["rel_ned"] for f in win],
+                                                             [f["quat"] for f in win])
+                        # Degrade the perfect trajectory by a KNOWN attitude error, which turns
+                        # the control into a measurement of how much pose error C2 tolerates.
+                        if getattr(args, "pose_rot_deg", 0.0) > 0:
+                            from eval.drone.noise import perturb_pose
+                            R_list = [perturb_pose(np.zeros(3), R, 0.0, args.pose_rot_deg, c2rng)[1]
+                                      for R in R_list]
+                    else:
+                        cam_trans, cam_quats = perc.forward_window([f["rgb"] for f in win],
+                                                                   res=args.res)
+                        R_list = [quat_to_R(q) for q in cam_quats]
                     kf_t = np.array([f["t"] for f in win])
                     s = vi_scale(cam_trans, R_list, kf_t, imu[:, 0], imu_cam)
                     gt = np.array([f["rel_ned"] for f in win])
@@ -373,7 +517,7 @@ def run_c2(args):
                     if not (np.isfinite(s) and np.isfinite(s_gt) and s > 0 and 7 < abs(s_gt) and s_gt < 1e4):
                         pass
                     err = abs(s - s_gt) / s_gt if (np.isfinite(s) and np.isfinite(s_gt) and s_gt > 1e-6) else float("nan")
-                    row = {"arm": "student", "scene": os.path.basename(scene), "seed": 2000 + k,
+                    row = {"arm": src, "scene": os.path.basename(scene), "seed": 2000 + k,
                            "w0": w0, "scale_est": round(float(s), 4), "scale_gt": round(float(s_gt), 4),
                            "scale_err_pct": round(float(err) * 100, 3) if np.isfinite(err) else None}
                     rows.append(row)
@@ -505,11 +649,46 @@ def main():
     ap.add_argument("--ckpt", default=os.environ.get("MERLIN_CKPT", ""))
     ap.add_argument("--dataset", default=None, help="scene_dataset_config.json (e.g. ReplicaCAD)")
     ap.add_argument("--arms", nargs="+", default=["student", "gt"])
+    ap.add_argument("--vggt_libs", default=None,
+                    help="the vggt package dir, added to sys.path in this process only")
+    ap.add_argument("--vggt_hf", default="facebook/VGGT-1B")
+    ap.add_argument("--da_libs", default=None,
+                    help="isolated site-packages for the 'da' arm, added to sys.path in this "
+                         "process only (never PYTHONPATH -- subprocesses use other pythons)")
+    ap.add_argument("--da_hf",
+                    default="depth-anything/Depth-Anything-V2-Metric-Indoor-Small-hf",
+                    help="weights for the 'da' arm (independent Jetson-capable baseline)")
+    ap.add_argument("--teacher_hf", default="facebook/map-anything-apache",
+                    help="weights for the 'teacher' arm (the top-of-line backbone)")
     ap.add_argument("--episodes", type=int, default=10)
     ap.add_argument("--res", type=int, default=378)
     ap.add_argument("--min_geo", type=float, default=2.0)
     ap.add_argument("--max_geo", type=float, default=10.0)
     ap.add_argument("--max_speed", type=float, default=1.0)
+    # Occupancy representation benchmark (eval/drone/maps.py). "voxel" is the shipped counting
+    # map, so omitting --map leaves every existing cell byte-identical.
+    ap.add_argument("--map", default="voxel", choices=["voxel", "logodds", "nanomap", "risk"])
+    ap.add_argument("--sigma_model", default=None,
+                    help="bench_depth.py --sigma_out JSON: the measured per-range depth bias "
+                         "and sigma used as the inverse sensor model")
+    ap.add_argument("--l_thresh", type=float, default=1.2,
+                    help="logodds/risk: occupancy log-odds threshold (conservatism knob)")
+    ap.add_argument("--k_sigma", type=float, default=2.0,
+                    help="logodds/risk: half-width of the hit bump, in sigma")
+    ap.add_argument("--window_frames", type=int, default=12,
+                    help="nanomap: number of recent depth frames retained")
+    ap.add_argument("--agree", type=int, default=1,
+                    help="nanomap: views that must call a point occupied (conservatism knob)")
+    ap.add_argument("--risk_k", type=float, default=1.5,
+                    help="risk: clearance margin in sigma of the observing measurement")
+    # nav_loop already honours cfg["carrot"], but only the staleness ablation ever set it, so
+    # --mode obstacles always ran with 0 and commanded a setpoint at most `step` ahead. The
+    # position controller decelerates into that setpoint, so the drone cruised at 0.18 m/s
+    # against a configured 0.6 (measured: median 0.180, max 0.210 over 2118 C4 episodes) and
+    # the 90 s budget bought ~15 m of travel. Default stays 0.0 so existing cells are unchanged.
+    ap.add_argument("--carrot", type=float, default=0.0,
+                    help="push the commanded setpoint this far along the planner-validated "
+                         "direction so the controller reaches --max_speed (0 = disabled)")
     ap.add_argument("--step", type=float, default=0.3, help="planner lookahead (m)")
     ap.add_argument("--alt", type=float, default=0.75, help="flight altitude (m)")
     ap.add_argument("--no_carve", action="store_true",
@@ -528,8 +707,16 @@ def main():
     ap.add_argument("--beauty", type=int, default=0, help="high-res replay pass (px), 0=off")
     ap.add_argument("--rgb_noise", type=float, default=0.0)
     ap.add_argument("--motion_blur", type=float, default=0.0)
+    ap.add_argument("--brightness", type=float, default=1.0,
+                    help="multiplicative exposure on the frame; 1.0 is off")
+    ap.add_argument("--auto_gain", action="store_true",
+                    help="normalise mean brightness before inference (camera-driver AGC)")
     ap.add_argument("--pose_noise", type=float, default=0.0)
     ap.add_argument("--rot_noise_deg", type=float, default=0.0)
+    ap.add_argument("--pose_drift", type=float, default=0.0,
+                    help="coherent odometry drift, metres of error per metre travelled")
+    ap.add_argument("--yaw_drift_deg", type=float, default=0.0,
+                    help="coherent heading drift, degrees per metre travelled")
     # Clearance ordering that has to hold for the nominal route to be traversable:
     # robot_radius (0.18) < planner safety < navmesh agent_radius (0.35). With safety at 0.35
     # the planner considers its own route blocked inside doorways and spends the episode in
@@ -614,9 +801,23 @@ def main():
     ap.add_argument("--goal_tol", type=float, default=1.0)
     ap.add_argument("--timeout", type=float, default=60.0)
     ap.add_argument("--window", type=int, default=8, help="C2 window length (frames)")
+    ap.add_argument("--c2_excite", type=float, default=1.0,
+                    help="C2 collection flight: fold the same envelope into more oscillations "
+                         "(1.0 = the original path, so existing cells stay comparable)")
+    ap.add_argument("--pose_rot_deg", type=float, default=0.0,
+                    help="inject this attitude RMS (deg) into the --pose_source gt trajectory, "
+                         "to measure how much pose error C2 actually tolerates")
+    ap.add_argument("--pose_source", default="student",
+                    choices=["student", "teacher", "vggt", "gt", "vo"],
+                    help="E0a: which model supplies the up-to-scale trajectory for --mode c2. "
+                         "'gt' feeds the GT trajectory, forcing true scale 1.0, and is the "
+                         "control on the IMU path itself")
     ap.add_argument("--res_list", nargs="+", type=int, default=[252, 378, 518], help="ablation res sweep")
     ap.add_argument("--latencies", nargs="+", type=float, default=None,
                     help="ablation: sweep map-staleness latency (ms) at --res instead of resolution")
+    ap.add_argument("--latency_ms", type=float, default=None,
+                    help="hold the map for this inference time (ms), overriding the measured "
+                         "operating point for --res; this is the knob that prices FPS in nav units")
     ap.add_argument("--speeds", nargs="+", type=float, default=[0.5, 1.0, 2.0], help="ablation speed sweep")
     ap.add_argument("--out", default=WS + "/out/c4")
     args = ap.parse_args()

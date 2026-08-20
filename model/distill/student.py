@@ -20,6 +20,48 @@ import torch
 
 from mapanything.models import MapAnything
 
+
+def _pin_torch_hub_ref():
+    """Stop torch.hub contacting github on every model build.
+
+    `torch.hub.load("owner/repo", ...)` calls `_parse_repo_info`, which urlopens
+    github.com to discover the default branch WHENEVER the ref is unpinned, and it does so
+    BEFORE consulting the cache. Its error handling then decides the outcome:
+      URLError  (no internet at all) -> falls back to the local cache, everything works
+      HTTPError (404)                -> assumes 'master'
+      HTTPError (anything else)      -> re-raises
+    Rate limiting returns 503, an HTTPError, so it propagates and the cache is never tried.
+    Having NO network would have been safe; having throttled network is what breaks it.
+    uniception's own `except: # Load from cache` does not help, because that branch repeats the
+    same github call and merely doubles the request count.
+
+    MEASURED: the C4 sweep loops classes in bash, so each (checkpoint, class) is its own process
+    and rebuilds the student. 20 processes made ~40 unauthenticated requests in a few minutes,
+    github throttled them, and 3 of 4 checkpoints silently produced nothing.
+
+    Pinning the ref makes `_parse_repo_info` skip the request entirely. Only pin when the cache
+    for that ref already exists, so a genuinely missing repo still resolves normally.
+    """
+    import torch.hub as _hub
+    if getattr(_hub, "_merlin_ref_pinned", False):
+        return
+    _orig = _hub._parse_repo_info
+
+    def _patched(github):
+        if ":" not in github:
+            stem = os.path.join(_hub.get_dir(), github.replace("/", "_"))
+            for ref in ("main", "master"):
+                if os.path.isdir(f"{stem}_{ref}"):
+                    github = f"{github}:{ref}"
+                    break
+        return _orig(github)
+
+    _hub._parse_repo_info = _patched
+    _hub._merlin_ref_pinned = True
+
+
+_pin_torch_hub_ref()
+
 # ViT-Base intermediate-feature indices for an 8-layer info-sharing stack.
 # Must be < depth. DPT uses encoder feats + these AAT feats.
 STUDENT_AAT_INDICES = [3, 5]

@@ -1,0 +1,70 @@
+{
+  "mode": "MAXN_SUPER",
+  "config": {
+    "D": 768,
+    "DH": 3072,
+    "TOKENS": 729,
+    "K": 4,
+    "R": 8
+  },
+  "gemms": [
+    {
+      "shape": [
+        729,
+        768,
+        3072
+      ],
+      "flops": 3439853568,
+      "time_us": 268.55499999999995,
+      "tops": 12.808748926663068,
+      "tactic": "__myl_MulMinMaxRouCas_0x39bd65634b59e28d49d08cb4ebd09f51,",
+      "int8_gemm": true
+    },
+    {
+      "shape": [
+        729,
+        3072,
+        768
+      ],
+      "flops": 3439853568,
+      "time_us": 316.406,
+      "tops": 10.871644557941378,
+      "tactic": "__myl_MulMinMaxRouCas_0x4500177cf437c0b3760e7985e364243b,",
+      "int8_gemm": true
+    }
+  ],
+  "bandwidth": {
+    "copy_gbs": 72.36772603204778,
+    "read_f32_gbs": 79.83727221370096,
+    "achieved_gbs": 79.83727221370096,
+    "bytes": 536870912
+  },
+  "all_experts_touched": 1.0,
+  "achieved_tops": 11.760967202941734,
+  "achieved_gbs": 79.83727221370096,
+  "roofline": {
+    "dense": {
+      "weight_bytes": 4718592,
+      "flops": 6879707136,
+      "intensity_flop_per_byte": 1458.0,
+      "time_us": 584.961,
+      "bound_by": "compute"
+    },
+    "vanilla": {
+      "weight_bytes": 18874368,
+      "flops": 6879707136,
+      "intensity_flop_per_byte": 364.5,
+      "time_us": 584.961,
+      "bound_by": "compute"
+    },
+    "residual": {
+      "weight_bytes": 4964352,
+      "flops": 7238025216,
+      "intensity_flop_per_byte": 1458.0,
+      "time_us": 615.42771875,
+      "bound_by": "compute"
+    },
+    "vanilla_penalty": 1.0,
+    "residual_penalty": 1.0520833333333335
+  }
+}

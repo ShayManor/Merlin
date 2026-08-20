@@ -6,13 +6,19 @@
 # Reusable driver wrapper: launch PX4 SIH, then run eval/drone/run_experiments.py with the
 # forwarded args. The renderer is spawned by the driver itself (at the model resolution).
 set -u
-WS=/scratch/gautschi/manors/merlin_drone
-export HF_HOME=$WS/hf_home TORCH_HOME=$WS/torch_home HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1
+# Overridable so the same driver runs off-cluster (e.g. a single cloud GPU box), where the
+# SBATCH headers above are inert and there is no SLURM_JOB_ID.
+WS=${MERLIN_WS:-/scratch/gautschi/manors/merlin_drone}
+JOB=${SLURM_JOB_ID:-$$}
+# Offline by default because Gautschi compute nodes have no internet; a host that does have
+# it (and so has not pre-warmed the caches) exports 0.
+export HF_HOME=$WS/hf_home TORCH_HOME=$WS/torch_home \
+       HF_HUB_OFFLINE=${HF_HUB_OFFLINE:-1} TRANSFORMERS_OFFLINE=${TRANSFORMERS_OFFLINE:-1}
 cd $WS/repo
 # MERLIN_PX4_INSTANCE selects the PX4 instance (MAVLink 14540+i) and renderer port (5601+i),
 # so co-located jobs do not collide.
 I=${MERLIN_PX4_INSTANCE:-0}
-bash eval/drone/run_px4.sh $I > $WS/drone_px4_${SLURM_JOB_ID}.log 2>&1 &
+bash eval/drone/run_px4.sh $I > $WS/drone_px4_${JOB}.log 2>&1 &
 sleep 15
 PYTHONPATH="$WS/repo:$WS/repo/model/distill:$WS/repo/model/backbones" \
   $WS/envs/modelenv/bin/python eval/drone/run_experiments.py "$@"

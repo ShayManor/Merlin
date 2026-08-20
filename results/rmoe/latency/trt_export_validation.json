@@ -1,0 +1,19 @@
+{
+  "_note": "Host-side validation of the four TRT formulations in model/moe/trt_ffn_moe.py, run on CPU torch 2.13 / onnx 1.22 / onnxruntime while the Jetson was offline. Establishes that the ONNX graphs are correct BEFORE spending a device cycle; the TensorRT build itself is still unmeasured and needs the Nano.",
+  "date": "2026-08-17", "k": 8, "tokens": 729, "d": 768, "dh": 3072,
+  "onnx_export": {
+    "dense": "ok", "masked": "ok", "capacity": "ok", "nonzero": "ok"
+  },
+  "onnxruntime_vs_torch_relmax": {
+    "dense": 1.635e-06, "masked": 4.566e-07, "capacity_cf1.5": 5.523e-07, "nonzero": 5.355e-07
+  },
+  "capacity_vs_reference_top1": [
+    {"cap_factor": 1.0, "C": 92,  "slots": 736,  "drop_frac_untrained_gate": 0.0398, "rel_vs_top1": 9.688e-01},
+    {"cap_factor": 1.5, "C": 138, "slots": 1104, "drop_frac_untrained_gate": 0.0,    "rel_vs_top1": 0.0},
+    {"cap_factor": 2.0, "C": 184, "slots": 1472, "drop_frac_untrained_gate": 0.0,    "rel_vs_top1": 0.0},
+    {"cap_factor": 4.0, "C": 368, "slots": 2944, "drop_frac_untrained_gate": 0.0,    "rel_vs_top1": 0.0}
+  ],
+  "capacity_ops": ["ArgMax", "OneHot", "CumSum", "ScatterElements", "Gather", "Gemm", "MatMul", "Where", "Clip", "Less", "Cast"],
+  "nonzero_ops_extra": ["NonZero"],
+  "caveat_drop_frac": "Measured with an UNTRAINED gate, which routes near-uniformly. The trained U8 routers ran at 5.05-5.51 effective experts of 8, so they are imbalanced and the capacity factor a deployment needs is k * max_share of the busiest expert, not 1.5."
+}

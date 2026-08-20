@@ -41,6 +41,63 @@ def test_perturb_pose_stays_a_rotation():
     assert abs(np.linalg.det(R2) - 1.0) < 1e-9
 
 
+def test_brightness_unit_gain_is_identity():
+    im = _img()
+    assert np.array_equal(nz.adjust_brightness(im, 1.0), im)
+
+def test_brightness_darkens_and_clips():
+    dark = nz.adjust_brightness(_img(), 0.5)
+    assert dark.dtype == np.uint8 and dark.max() <= 120
+    bright = nz.adjust_brightness(_img(), 10.0)
+    assert bright.max() <= 255
+
+def test_auto_gain_restores_the_set_point():
+    """The camera-driver fix must recover mean exposure from the frame alone."""
+    out = nz.auto_gain(nz.adjust_brightness(_img(), 0.5))
+    assert abs(float(out.mean()) - 128.0) < 2.0
+
+def test_auto_gain_cannot_undo_clipping():
+    """Darkening is lossy, so the fix is not a perfect inverse. Guards against reading a
+    null E2 result as 'auto_gain restores the clean frame'."""
+    im = np.random.default_rng(0).integers(0, 255, (32, 32, 3), dtype=np.uint8)
+    assert not np.array_equal(nz.auto_gain(nz.adjust_brightness(im, 0.02)), im)
+
+def test_pose_drift_zero_rate_is_identity():
+    d = nz.PoseDrift(0.0, 0.0, np.random.default_rng(0))
+    p, R = d.apply(np.array([1.0, 2.0, 3.0]), np.eye(3))
+    assert np.allclose(p, [1.0, 2.0, 3.0]) and np.allclose(R, np.eye(3))
+
+def test_pose_drift_grows_linearly_with_distance_travelled():
+    """rate is metres of error per metre flown, so it maps straight onto C3's ATE-as-a-
+    percentage-of-path-length target without conversion."""
+    d = nz.PoseDrift(0.02, 0.0, np.random.default_rng(0))
+    d.apply(np.zeros(3), np.eye(3))                      # start the odometer
+    p5, _ = d.apply(np.array([5.0, 0.0, 0.0]), np.eye(3))
+    assert abs(np.linalg.norm(p5 - np.array([5.0, 0.0, 0.0])) - 0.02 * 5.0) < 1e-9
+    p10, _ = d.apply(np.array([10.0, 0.0, 0.0]), np.eye(3))
+    assert abs(np.linalg.norm(p10 - np.array([10.0, 0.0, 0.0])) - 0.02 * 10.0) < 1e-9
+
+def test_pose_drift_is_coherent_not_blur():
+    """Error direction is held for the episode. An i.i.d. direction would blur the map,
+    which is perturb_pose's failure mode, not drift's."""
+    d = nz.PoseDrift(0.02, 0.0, np.random.default_rng(1))
+    d.apply(np.zeros(3), np.eye(3))
+    a, _ = d.apply(np.array([3.0, 0.0, 0.0]), np.eye(3))
+    b, _ = d.apply(np.array([6.0, 0.0, 0.0]), np.eye(3))
+    ea = a - np.array([3.0, 0.0, 0.0])
+    eb = b - np.array([6.0, 0.0, 0.0])
+    cos = float(ea @ eb / (np.linalg.norm(ea) * np.linalg.norm(eb)))
+    assert cos > 0.999
+
+def test_pose_drift_yaw_stays_a_rotation():
+    d = nz.PoseDrift(0.0, 1.0, np.random.default_rng(0))
+    d.apply(np.zeros(3), np.eye(3))
+    _, R = d.apply(np.array([4.0, 0.0, 0.0]), np.eye(3))
+    assert np.allclose(R @ R.T, np.eye(3), atol=1e-9)
+    assert abs(np.linalg.det(R) - 1.0) < 1e-9
+    assert not np.allclose(R, np.eye(3))
+
+
 def test_random_depth_is_smooth_and_in_range():
     """The uninformative-depth control must produce a map of the same character as a real
     one -- coherent surfaces in the same range -- or it degenerates into flying blind."""

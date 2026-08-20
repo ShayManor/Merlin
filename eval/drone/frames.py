@@ -46,6 +46,20 @@ def ned_quat_to_hab_R(q_frd2ned):
     return R_NED2HAB @ R_cam2ned
 
 
+def ned_traj_to_cam0(rel_neds, quats_frd2ned):
+    """GT camera trajectory in the FIRST frame's camera frame.
+
+    Returns (P_c0, R_list) in exactly the convention forward_window produces: positions in c0
+    and rotations cam_k -> c0. Feeding this to vi_scale in place of a visual trajectory is the
+    C2 control: the true scale is then 1.0 by construction, so the solver must return ~1.0. If
+    it does not, the fault is in the IMU path and no pose estimator can fix it.
+    """
+    P = np.asarray(rel_neds, float)
+    R_cam2ned = [quat_to_R(q) @ _R_FRD2CAM.T for q in quats_frd2ned]
+    R0 = R_cam2ned[0]
+    return (np.array([R0.T @ (p - P[0]) for p in P]), [R0.T @ R for R in R_cam2ned])
+
+
 def frd_acc_to_cam(acc_frd):
     """Rotate a body-FRD vector (e.g. PX4 accelerometer) into the student's camera/optical
     frame, so the IMU is consistent with the cam_quats rotations vi_scale uses. Without this

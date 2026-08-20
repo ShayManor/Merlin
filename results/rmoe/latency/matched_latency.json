@@ -1,0 +1,200 @@
+{
+  "metric_key": "site_ms",
+  "scatter_near": 0.0087,
+  "rows": [
+    {
+      "arm": "dense",
+      "label": "dense FT",
+      "trainable_M": 37.8,
+      "active_M": 37.8,
+      "whole": 0.0927,
+      "near": 0.1156,
+      "unseen": 0.0705,
+      "accuracy_inferred": false,
+      "dh": 3072,
+      "site_ms": 1.094,
+      "site_vs_dense": 1.0,
+      "top_k": 1,
+      "frame_ms_fp16_derived": 169.49,
+      "frame_ms_int8_trt": 49.66,
+      "int8_basis": "dense, fully INT8-TRT; only the FFN share scales with width. The +165 arm's fp16 misalignment penalty is a cuBLAS artifact and is NOT carried into INT8, where TRT picks its own kernels -- unmeasured",
+      "fps_int8_trt": 20.13693113169553,
+      "frame_ms_int8_best": 49.66,
+      "fps_int8_best": 20.13693113169553
+    },
+    {
+      "arm": "widen168",
+      "label": "dense widen +168 (ld aligned)",
+      "trainable_M": 39.8,
+      "active_M": 39.8,
+      "whole": 0.0873,
+      "near": 0.1185,
+      "unseen": 0.07,
+      "accuracy_inferred": true,
+      "dh": 3240,
+      "site_ms": 1.168,
+      "site_vs_dense": 1.0676416819012795,
+      "top_k": 1,
+      "frame_ms_fp16_derived": 170.082,
+      "frame_ms_int8_trt": 49.774843749999995,
+      "int8_basis": "dense, fully INT8-TRT; only the FFN share scales with width. The +165 arm's fp16 misalignment penalty is a cuBLAS artifact and is NOT carried into INT8, where TRT picks its own kernels -- unmeasured",
+      "fps_int8_trt": 20.09046989725608,
+      "frame_ms_int8_best": 49.774843749999995,
+      "fps_int8_best": 20.09046989725608
+    },
+    {
+      "arm": "widen165",
+      "label": "dense widen +165 (as trained, ld unaligned)",
+      "trainable_M": 39.8,
+      "active_M": 39.8,
+      "whole": 0.0873,
+      "near": 0.1185,
+      "unseen": 0.07,
+      "accuracy_inferred": false,
+      "dh": 3237,
+      "site_ms": 2.388,
+      "site_vs_dense": 2.182815356489945,
+      "top_k": 1,
+      "frame_ms_fp16_derived": 179.842,
+      "frame_ms_int8_trt": 49.77279296875,
+      "int8_basis": "dense, fully INT8-TRT; only the FFN share scales with width. The +165 arm's fp16 misalignment penalty is a cuBLAS artifact and is NOT carried into INT8, where TRT picks its own kernels -- unmeasured",
+      "fps_int8_trt": 20.091297682005774,
+      "frame_ms_int8_best": 49.77279296875,
+      "fps_int8_best": 20.091297682005774
+    },
+    {
+      "arm": "U2_top1",
+      "label": "U2 top-1",
+      "trainable_M": 75.6,
+      "active_M": 37.8,
+      "whole": 0.0939,
+      "near": 0.1351,
+      "unseen": 0.0696,
+      "accuracy_inferred": false,
+      "dh": 3072,
+      "site_ms": 2.133,
+      "site_vs_dense": 1.949725776965265,
+      "top_k": 1,
+      "frame_ms_fp16_derived": 177.80200000000002,
+      "frame_ms_int8_hybrid": 64.624,
+      "int8_basis": "no TRT engine measured for this arm: trt_ffn_moe.py covers top-1 dispatch only, and top-2 doubles the dispatch slots",
+      "fps_int8_hybrid": 15.47412725922258,
+      "frame_ms_int8_best": 64.624,
+      "fps_int8_best": 15.47412725922258
+    },
+    {
+      "arm": "U8_top1",
+      "label": "U8 top-1",
+      "trainable_M": 302.2,
+      "active_M": 37.8,
+      "whole": 0.0957,
+      "near": 0.1457,
+      "unseen": 0.0725,
+      "accuracy_inferred": false,
+      "dh": 3072,
+      "site_ms": 1.909,
+      "site_vs_dense": 1.7449725776965264,
+      "top_k": 1,
+      "frame_ms_fp16_derived": 176.01000000000002,
+      "frame_ms_int8_hybrid": 62.831999999999994,
+      "trt_ratio_vs_dense": 4.7809623101738925,
+      "frame_ms_int8_trt": 57.60002085136517,
+      "fps_int8_trt": 17.36110482634138,
+      "fps_int8_hybrid": 15.915457091927681,
+      "frame_ms_int8_best": 57.60002085136517,
+      "fps_int8_best": 17.36110482634138
+    },
+    {
+      "arm": "U8_top2",
+      "label": "U8 top-2",
+      "trainable_M": 302.2,
+      "active_M": 75.6,
+      "whole": 0.0862,
+      "near": 0.1323,
+      "unseen": 0.0691,
+      "accuracy_inferred": false,
+      "dh": 3072,
+      "site_ms": 3.884,
+      "site_vs_dense": 3.5502742230347346,
+      "top_k": 2,
+      "frame_ms_fp16_derived": 191.81,
+      "frame_ms_int8_hybrid": 78.63199999999999,
+      "int8_basis": "no TRT engine measured for this arm: trt_ffn_moe.py covers top-1 dispatch only, and top-2 doubles the dispatch slots",
+      "fps_int8_hybrid": 12.717468715026962,
+      "frame_ms_int8_best": 78.63199999999999,
+      "fps_int8_best": 12.717468715026962
+    }
+  ],
+  "dominated": {
+    "U2_top1": [],
+    "U8_top1": [
+      "dense FT",
+      "dense widen +168 (ld aligned)"
+    ],
+    "U8_top2": []
+  },
+  "verdict": {
+    "U2_top1": {
+      "dominated_by": [],
+      "dense": {
+        "ms_premium": 1.949725776965265,
+        "better_by": {
+          "unseen": 0.000899999999999998
+        },
+        "worse_by": {
+          "whole": 0.0011999999999999927,
+          "near": 0.019500000000000003
+        }
+      },
+      "widen168": {
+        "ms_premium": 1.8261986301369864,
+        "better_by": {
+          "unseen": 0.00040000000000001146
+        },
+        "worse_by": {
+          "whole": 0.006599999999999995,
+          "near": 0.016600000000000004
+        }
+      }
+    },
+    "U8_top1": {
+      "dominated_by": [
+        "dense FT",
+        "dense widen +168 (ld aligned)"
+      ]
+    },
+    "U8_top2": {
+      "dominated_by": [],
+      "dense": {
+        "ms_premium": 3.5502742230347346,
+        "better_by": {
+          "whole": 0.006500000000000006,
+          "unseen": 0.0013999999999999985
+        },
+        "worse_by": {
+          "near": 0.016700000000000007
+        }
+      },
+      "widen168": {
+        "ms_premium": 3.3253424657534247,
+        "better_by": {
+          "whole": 0.0011000000000000038,
+          "unseen": 0.0009000000000000119
+        },
+        "worse_by": {
+          "near": 0.013800000000000007
+        }
+      },
+      "widen165": {
+        "ms_premium": 1.6264656616415412,
+        "better_by": {
+          "whole": 0.0011000000000000038,
+          "unseen": 0.0009000000000000119
+        },
+        "worse_by": {
+          "near": 0.013800000000000007
+        }
+      }
+    }
+  }
+}
