@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- MERLIN CycloneDDS profile for the Jetson <-> Rubik Pi link.
+     Use on BOTH boards:  export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
+                          export CYCLONEDDS_URI=file://$(pwd)/cyclonedds.xml
+                          export ROS_DOMAIN_ID=<same on both>   (e.g. 17)
+     Link (from CLAUDE.md): Jetson enP8p1s0 192.168.50.1/24  <->  Rubik enxf074e47f5013 192.168.50.2/24
+     Set CYCLONEDDS_IFACE per board (see README); peers are pinned so discovery does not leak
+     onto other interfaces. Never publish raw dense clouds over this link (see merlin_bringup/README). -->
+<CycloneDDS xmlns="https://cdds.io/config">
+  <Domain id="any">
+    <General>
+      <!-- Pin to the wired link. Override the address per board via env if you prefer:
+           Jetson: 192.168.50.1   Rubik Pi: 192.168.50.2 -->
+      <Interfaces>
+        <NetworkInterface autodetermine="false" name="${CYCLONEDDS_IFACE}" priority="default" multicast="false"/>
+      </Interfaces>
+      <AllowMulticast>false</AllowMulticast>
+      <MaxMessageSize>65500B</MaxMessageSize>
+      <FragmentSize>4000B</FragmentSize>
+    </General>
+
+    <!-- Static peers: no multicast on this point-to-point link, so list both ends. -->
+    <Discovery>
+      <ParticipantIndex>auto</ParticipantIndex>
+      <Peers>
+        <Peer address="192.168.50.1"/>
+        <Peer address="192.168.50.2"/>
+      </Peers>
+    </Discovery>
+
+    <Internal>
+      <!-- Headroom for keyframe depth+pose bursts; high-rate pose stays small/best-effort. -->
+      <Watermarks>
+        <WhcHigh>2MB</WhcHigh>
+      </Watermarks>
+      <SynchronousDeliveryPriorityThreshold>0</SynchronousDeliveryPriorityThreshold>
+    </Internal>
+
+    <Tracing>
+      <Verbosity>warning</Verbosity>
+      <OutputFile>stderr</OutputFile>
+    </Tracing>
+  </Domain>
+</CycloneDDS>

@@ -175,6 +175,7 @@ def _c4_rows(args, jsonl_path=None, extra=None):
         assert bridge.wait_ready(40), "PX4 not ready"
         bridge.configure_sim()
         perc = Perception(args.ckpt) if args.ckpt else None
+        _rc = [None]   # live Recirculator for the current episode, torn down after each arm
         # Built on first use and reused: a 1.2 B-parameter load per episode would dwarf the
         # flight time and is not what the arm is measuring.
         _teacher = [None]
@@ -336,6 +337,42 @@ def _c4_rows(args, jsonl_path=None, extra=None):
                         out0 = client.render(ep.ned_to_hab_pos([0, 0, 0]), R0)
                         _d.calibrate_gt(out0["rgb"], out0["depth"], res=args.res)
                         dp = lambda out, r=args.res, _m=_d: _m.depth(out["rgb"], res=r)
+                    elif arm == "student2":
+                        # BYTE-IDENTICAL to the plain `student` arm. Flying the same policy
+                        # twice on identical layouts measures the harness's own run-to-run
+                        # variance (PX4 SITL + planner), which is the noise floor every paired
+                        # McNemar in this campaign is quoted against. Without it, a b/c split
+                        # cannot be distinguished from the loop simply not being reproducible.
+                        R0 = ep.ned_quat_to_hab_R(np.array([0, 0, 0, 1.0]))
+                        out0 = client.render(ep.ned_to_hab_pos([0, 0, 0]), R0)
+                        perc.calibrate_gt(out0["rgb"], out0["depth"], res=args.res)
+                        dp = lambda out, r=args.res: decompress_steps(
+                            perc.depth(out["rgb"], res=r),
+                            getattr(args, "calib", 0), args.alpha, args.cap)
+                    elif arm in ("student_recirc", "student_ema", "student_recirc_ema"):
+                        # Inference-time temporal arms on the SAME frozen checkpoint as
+                        # `student`, sharing its per-episode GT scale calibration so the only
+                        # difference is the temporal mechanism. Offline these move depth by
+                        # 1-2% on the mid field; whether that reaches navigation is the point
+                        # of running them here, because this repo has already shown depth
+                        # metrics do not predict nav success.
+                        R0 = ep.ned_quat_to_hab_R(np.array([0, 0, 0, 1.0]))
+                        out0 = client.render(ep.ned_to_hab_pos([0, 0, 0]), R0)
+                        perc.calibrate_gt(out0["rgb"], out0["depth"], res=args.res)
+                        if "recirc" in arm:
+                            from recirc.recirc import Recirculator
+                            _rc[0] = Recirculator(perc.model, args.recirc_src, args.recirc_dst,
+                                                  alpha=args.recirc_alpha, center=args.recirc_center,
+                                                  lag=args.recirc_lag, mode="prev")
+                        _acc = [None]
+                        _w = args.ema_w if arm.endswith("ema") else 0.0
+
+                        def dp(out, r=args.res, _p=perc, _a=_acc, _ww=_w):
+                            d = _p.depth(out["rgb"], res=r)
+                            if _ww > 0.0:
+                                _a[0] = d if _a[0] is None else (1.0 - _ww) * d + _ww * _a[0]
+                                return _a[0]
+                            return d
                     elif arm == "student_pfs":
                         # oracle per-frame scale: isolates scale error from shape error
                         dp = lambda out, r=args.res: perc.depth_gt_scaled(out["rgb"],
@@ -366,6 +403,12 @@ def _c4_rows(args, jsonl_path=None, extra=None):
                                                              and arm != "blind"),
                                          obs_boxes=[(o["pos"], o["bbox"])
                                                     for o in obs_info.get("placed", [])]))
+                    _ninj = _rc[0].n_injected if _rc[0] is not None else None
+                    if _rc[0] is not None:
+                        # MUST remove: leaving the hooks installed would silently recirculate
+                        # the plain `student` control arm on the next pass through this loop.
+                        _rc[0].remove()
+                        _rc[0] = None
                     # Capture frames and persist the full log BEFORE obstacles are cleared:
                     # replay re-renders the recorded poses, which only reproduces what the
                     # model saw while the scene still holds the obstacles.
@@ -376,6 +419,9 @@ def _c4_rows(args, jsonl_path=None, extra=None):
                     m.pop("log", None)
                     row = {"arm": arm, "scene": os.path.basename(scene), "seed": sd,
                            "geo_sampled": round(float(epinfo["geo"]), 3), **m}
+                    if _ninj is not None:
+                        # proof the graft ran: expect n_keyframes - recirc_lag injections
+                        row["n_inj"] = _ninj
                     if extra:
                         row.update(extra)
                     rows.append(row)
@@ -649,6 +695,19 @@ def main():
     ap.add_argument("--ckpt", default=os.environ.get("MERLIN_CKPT", ""))
     ap.add_argument("--dataset", default=None, help="scene_dataset_config.json (e.g. ReplicaCAD)")
     ap.add_argument("--arms", nargs="+", default=["student", "gt"])
+    # Cross-frame recirculation (RECIRC-00/01). Arms: student_recirc / student_ema /
+    # student_recirc_ema. Weights are FROZEN; this is an inference-time graft.
+    ap.add_argument("--recirc_src", default="enc.11")
+    ap.add_argument("--recirc_dst", default="enc.3")
+    ap.add_argument("--recirc_alpha", type=float, default=0.15)
+    ap.add_argument("--recirc_center", type=float, default=0.9)
+    ap.add_argument("--recirc_lag", type=int, default=3,
+                    help="keyframes back to inject from. The useful interval is a camera "
+                         "BASELINE (~0.10 m); the loop's measured step is 0.0308 m/keyframe "
+                         "(641 episodes), so lag=1 sits in the redundant regime and lag=3 "
+                         "lands on ~0.09 m.")
+    ap.add_argument("--ema_w", type=float, default=0.15,
+                    help="output-space depth EMA weight for the *_ema arms")
     ap.add_argument("--vggt_libs", default=None,
                     help="the vggt package dir, added to sys.path in this process only")
     ap.add_argument("--vggt_hf", default="facebook/VGGT-1B")
