@@ -48,7 +48,63 @@ from moe.upcycle import (  # noqa: E402
 
 SITE = "dpt_regressor_head.conv2.0"
 
+
+def run_c4(ckpt, step, args):
+    """Fly ONE checkpoint closed-loop and return its C4 row, or None.
+
+    C4 is the only quantity that selects a checkpoint. Measured 2026-09-08/09, whole-frame
+    AbsRel, near-field AbsRel, false_near and boundary_f1 all improve monotonically over a range
+    across which C4 falls 0.824 -> 0.178, so every offline metric ranks these models backwards.
+
+    Never raises and never aborts training: a timeout or a broken PX4 records null. Losing one
+    validation point is cheap, losing a 90,000-step run to a flaky simulator is not.
+    """
+    import subprocess
+    out = os.path.join(os.path.dirname(args.save_ckpt) or ".", f"c4val_step{step}")
+    # The drone harness and this file live in separate trees on the cluster, so the relative
+    # guess is only a fallback. MERLIN_C4_SCRIPT names it outright.
+    script = os.environ.get("MERLIN_C4_SCRIPT") or os.path.join(
+        HERE, "..", "..", "eval", "drone", "c4_val.sh")
+    if not os.path.exists(script):
+        print(f"[c4] step {step}: no c4_val.sh at {script}, recorded null", flush=True)
+        return None
+    cmd = [script, ckpt, out,
+           str(args.c4_instance), str(args.c4_seed0), str(args.c4_episodes)] + args.c4_classes
+    env = {**os.environ, "BLIND": "1" if args.c4_blind_once and step <= args.c4_first else "0"}
+    try:
+        r = subprocess.run(["bash"] + cmd, capture_output=True, text=True,
+                           timeout=args.c4_timeout, env=env)
+    except subprocess.TimeoutExpired:
+        print(f"[c4] step {step}: TIMEOUT after {args.c4_timeout}s, recorded null", flush=True)
+        return None
+    line = next((l for l in r.stdout.splitlines() if l.startswith("C4VAL ")), None)
+    if not line:
+        print(f"[c4] step {step}: no C4VAL line, recorded null. tail: "
+              f"{r.stdout.strip()[-200:]} {r.stderr.strip()[-200:]}", flush=True)
+        return None
+    d = json.loads(line[6:])
+    # G-SPEED: the pinned PX4 at ec5b951 flies 0.177 m/s. A rebuilt box read 0.287 and changed
+    # every closed-loop number while perception was untouched, so an out-of-band speed voids the
+    # point rather than being reported as a result.
+    ms = d.get("mean_speed") or 0.0
+    if d.get("n", 0) < max(8, int(0.8 * args.c4_episodes * len(args.c4_classes))):
+        print(f"[c4] step {step}: only {d.get('n')} valid episodes, recorded null", flush=True)
+        return None
+    if not (0.16 <= ms <= 0.20):
+        print(f"[c4] step {step}: mean_speed {ms:.3f} outside [0.16, 0.20], PX4 SUSPECT", flush=True)
+        d["px4_suspect"] = True
+    print(f"[c4] step {step}: C4 {d['c4']:.3f} (n={d['n']}, void={d['void']}) "
+          f"blocked_frac {d['blocked_frac']:.3f} speed {ms:.3f}"
+          + (f" blind {d['blind']:.3f}" if d.get("blind") is not None else ""), flush=True)
+    return d
+
 BINS = [(0.2, 0.5), (0.5, 0.8), (0.8, 1.2), (1.2, 1.8), (1.8, 2.5)]
+# Reported but NOT part of `primary`: adding them there would silently redefine the objective
+# every earlier cell was scored on. 0.05-0.20 m is where phantom voxels are born and it was
+# never measured; at the old DEPTH_FLOOR the first of these bins is empty by construction.
+SUB_BINS = [(0.05, 0.10), (0.10, 0.15), (0.15, 0.20)]
+EVAL_BINS = SUB_BINS + BINS
+DEPTH_FLOOR = 0.10                               # metres, overridden by --depth-floor
 BOUNDARY_THRESH = 0.10        # |grad log-depth| defining a boundary pixel; fixed before any arm
 FALSE_NEAR_MARGIN = 0.15      # metres a prediction must sit IN FRONT of truth to count as phantom
 
@@ -401,7 +457,7 @@ def si_loss(pred, gt, pix_w=None, anchor_shift=False, metric=False):
     refits scale on the whole frame, so a bin-masked shift is a train/eval mismatch that made
     bin specialists score worse than the untrained model on their own bin.
     """
-    v = torch.isfinite(pred) & torch.isfinite(gt) & (gt > 0.1) & (gt < 8.0) & (pred > 0.05)
+    v = torch.isfinite(pred) & torch.isfinite(gt) & (gt > DEPTH_FLOOR) & (gt < 8.0) & (pred > 0.05)
     if v.sum() < 200:
         return None
     diff = pred.clamp_min(0.05).log() - gt.clamp_min(0.05).log()
@@ -567,13 +623,13 @@ def boundary_f1(pred, gt, valid):
 @torch.no_grad()
 def evaluate(model, pairs, arm, cache, size, dev, n=200, cal=None, metric=False):
     model.eval()
-    acc = {f"{lo}-{hi}": {"abs": [], "rel": [], "bias": []} for lo, hi in BINS}
+    acc = {f"{lo}-{hi}": {"abs": [], "rel": [], "bias": []} for lo, hi in EVAL_BINS}
     whole, fnear, bf1 = [], [], []
     for r, d in pairs[:n]:
         z = predict_depth(model, [r], size, dev,
                           key=batch_key(arm, cache, [r], [d], (size, size), dev, cal))[0]
         gt = torch.from_numpy(load_depth(d, *z.shape)).float().to(dev)
-        v = torch.isfinite(z) & torch.isfinite(gt) & (gt > 0.1) & (gt < 10) & (z > 0.05)
+        v = torch.isfinite(z) & torch.isfinite(gt) & (gt > DEPTH_FLOOR) & (gt < 10) & (z > 0.05)
         if v.sum() < 200:
             continue
         # metric=True reports depth AS PREDICTED, in metres. The default rescales per frame to
@@ -585,7 +641,7 @@ def evaluate(model, pairs, arm, cache, size, dev, n=200, cal=None, metric=False)
         # over a whole trajectory rather than a single frame.
         fnear.append(float(((pa < gt - FALSE_NEAR_MARGIN) & v).float().sum() / v.float().sum()))
         bf1.append(boundary_f1(pa, gt, v))
-        for lo, hi in BINS:
+        for lo, hi in EVAL_BINS:
             b = v & (gt >= lo) & (gt < hi)
             if b.sum() > 100:
                 e = pa[b] - gt[b]                              # +ve = predicted FARTHER than truth
@@ -610,6 +666,7 @@ def evaluate(model, pairs, arm, cache, size, dev, n=200, cal=None, metric=False)
 # ------------------------------------------------------------------ main
 
 def main():
+    global DEPTH_FLOOR                 # --depth-floor rebinds it for both the loss and the eval
     ap = argparse.ArgumentParser()
     ap.add_argument("--arm", required=True,
                     choices=["D", "M", "F", "L_top1", "L_soft", "P", "O", "R", "ORE", "U"])
@@ -640,6 +697,30 @@ def main():
     ap.add_argument("--res", type=int, default=378)
     ap.add_argument("--aux-coef", type=float, default=0.01)
     ap.add_argument("--loss", choices=["uniform", "binbal"], default="uniform")
+    ap.add_argument("--depth-floor", type=float, default=DEPTH_FLOOR,
+                    help="metres. Pixels at or below this are dropped by BOTH the loss and the "
+                         "eval, so train and eval keep the same support. 0.10 is the historical "
+                         "value and preserves every published number; 0.05 admits the "
+                         "near-contact band that gen_nearfield --body_clear renders.")
+    ap.add_argument("--c4-every", type=int, default=0,
+                    help="run C4 closed-loop validation every N steps (0 = off). C4 is the only "
+                         "signal that selects a checkpoint; see run_c4().")
+    ap.add_argument("--c4-steps", default="",
+                    help="comma-separated EXTRA steps to run C4 at, on top of --c4-every. The "
+                         "measured C4 peak sits near 3,000 steps, so a cadence alone lands its "
+                         "first point long past the optimum.")
+    ap.add_argument("--c4-episodes", type=int, default=15,
+                    help="episodes per class per C4 eval")
+    ap.add_argument("--c4-classes", nargs="+",
+                    default=["wall_cabinet_01", "clothes_hanger_02"],
+                    help="two classes, so selection cannot overfit one obstacle")
+    ap.add_argument("--c4-seed0", type=int, default=12000,
+                    help="validation seeds, kept DISJOINT from the reporting seeds 9000-9079 so "
+                         "the confirmed number carries no selection bias")
+    ap.add_argument("--c4-instance", type=int, default=0, help="PX4/renderer instance")
+    ap.add_argument("--c4-timeout", type=int, default=2400)
+    ap.add_argument("--c4-blind-once", type=int, default=1,
+                    help="fly the blind control at the first C4 eval only; it must read 0.000")
     ap.add_argument("--router-ckpt", default="/data/ckpt/router_head.pt")
     ap.add_argument("--aat-depth", type=int, default=SRC_DEPTH,
                     help="deepen the AAT stack with identity blocks before training. The "
@@ -745,7 +826,15 @@ def main():
     args = ap.parse_args()
 
     sites = [x.strip() for x in args.sites.split(",")] if args.sites else [SITE]
+    DEPTH_FLOOR = args.depth_floor
     snap_steps = {int(x) for x in args.snapshot_steps.split(",") if x.strip()}
+    # C4 flies a step-tagged file, so every C4 step must also be a snapshot step or the weights
+    # that produced the number are gone by the next eval (--save-ckpt is overwritten each time).
+    c4_steps = {int(x) for x in args.c4_steps.split(",") if x.strip()}
+    if args.c4_every:
+        c4_steps |= {s for s in range(args.c4_every, args.steps + 1, args.c4_every)}
+    args.c4_first = min(c4_steps) if c4_steps else 0
+    snap_steps |= c4_steps
     if snap_steps and any(s % args.eval_every for s in snap_steps):
         raise SystemExit(f"--snapshot-steps {sorted(snap_steps)} must all be multiples of "
                          f"--eval-every {args.eval_every}; snapshots only land on eval boundaries")
@@ -800,6 +889,12 @@ def main():
         print(f"[cell] bin centres (m): "
               f"{[round(float(np.exp(c)), 3) for c in centres]}", flush=True)
 
+    # Whitening the router input is part of the FUNCTION, not of training only: the gate rows sit
+    # on k-means centroids of whitened features, so rebuilding without it routes elsewhere.
+    # Bound once here and recorded in every checkpoint, because a consumer that has to re-derive
+    # it from --router-init cannot, and defaulting it silently evaluates a different model.
+    router_norm = bool(args.router_norm or args.router_init == "kmeans")
+
     if args.arm == "M":
         params = []                        # evaluate the deployed model as-is
     elif args.arm == "F":
@@ -832,7 +927,7 @@ def main():
         from moe.ffn_moe import ffn_parameters, upcycle_ffn
         mods = upcycle_ffn(model, sites, num_experts=args.k, top_k=args.top_k,
                            council_m=args.council_m, balance=args.balance,
-                           router_norm=args.router_norm or args.router_init == "kmeans",
+                           router_norm=router_norm,
                            route_dim=args.route_dim)
         if args.route_dim:
             blk0 = model.info_sharing.self_attention_blocks[0]
@@ -865,7 +960,7 @@ def main():
         mods = upcycle_ore(model, sites, num_experts=args.k, rank=args.rank, balance=args.balance,
                            n_layers=args.n_layers, freeze=True, centres_log=centres,
                            route_mode="key" if keyarm else args.route_mode,
-                           router_norm=args.router_norm or args.router_init == "kmeans",
+                           router_norm=router_norm,
                            b_init=args.b_init, b_scale=args.b_scale,
                            route_dim=args.route_dim)
         if args.route_dim:
@@ -962,7 +1057,8 @@ def main():
                            if args.bin_edges else None),
            "sites": sites, "steps": args.steps, "lr": args.lr,
            "centres_log": [float(c) for c in centres] if centres is not None else None,
-           "boundary_thresh": BOUNDARY_THRESH, "train_n": len(train), "val_n": len(val)}
+           "boundary_thresh": BOUNDARY_THRESH, "train_n": len(train), "val_n": len(val),
+           "router_norm": router_norm}
     if args.arm in ("ORE", "U"):
         # the parameter audit was computed and then dropped on the floor; arm U's whole claim is
         # "active trainable params EQUAL dense", so it has to survive into the JSON
@@ -1155,12 +1251,23 @@ def main():
                       "rank": args.rank, "sites": sites, "seed": args.seed,
                       "step": step, "route_dim": args.route_dim,
                       "aat_depth": args.aat_depth, "ffn_widen": args.ffn_widen,
-                      "top_k": args.top_k, "council_m": args.council_m}
+                      "top_k": args.top_k, "council_m": args.council_m,
+                      "router_norm": router_norm}
                 torch.save(ck, args.save_ckpt)
+                snap_path = None
                 if step in snap_steps:
-                    torch.save(ck, args.save_ckpt[:-3] + f"_step{step}.pt"
-                               if args.save_ckpt.endswith(".pt")
-                               else args.save_ckpt + f"_step{step}")
+                    snap_path = (args.save_ckpt[:-3] + f"_step{step}.pt"
+                                 if args.save_ckpt.endswith(".pt")
+                                 else args.save_ckpt + f"_step{step}")
+                    torch.save(ck, snap_path)
+                # C4 closed-loop validation. It is the selection signal, so it goes on the same
+                # curve entry as the depth metrics it overrules.
+                if snap_path and step in c4_steps:
+                    c4 = run_c4(snap_path, step, args)
+                    curve[-1]["c4"] = (c4 or {}).get("c4")
+                    curve[-1]["c4_blocked_frac"] = (c4 or {}).get("blocked_frac")
+                    curve[-1]["c4_n"] = (c4 or {}).get("n")
+                    curve[-1]["c4_raw"] = c4
             # Partial dump EVERY eval. A 25,000-step run is ~11 h; writing only at the end means a
             # kill, a preemption or simply not being finished yet yields nothing at all.
             json.dump({**res, "curve": curve, "partial_at_step": step,
@@ -1212,7 +1319,8 @@ def main():
                     "rank": args.rank, "sites": sites, "seed": args.seed,
                     "step": args.steps, "route_dim": args.route_dim,
                     "aat_depth": args.aat_depth, "ffn_widen": args.ffn_widen,
-                    "top_k": args.top_k, "council_m": args.council_m},
+                    "top_k": args.top_k, "council_m": args.council_m,
+                    "router_norm": router_norm},
                    args.save_ckpt)
         print(f"[cell] saved weights -> {args.save_ckpt}", flush=True)
     json.dump(res, open(args.out, "w"), indent=2)

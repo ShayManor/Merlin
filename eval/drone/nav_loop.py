@@ -111,6 +111,7 @@ def run_episode(bridge, client, depth_provider, ep, waypoints_ned, cfg):
         from eval.drone.noise import PoseDrift
         drift = PoseDrift(cfg.get("pose_drift", 0.0), cfg.get("yaw_drift_deg", 0.0), rng)
     blocked_ticks = 0
+    block_probe = []      # (pos_hab, subgoal_hab) on a sample of refused ticks
     prev_pos = None
     last_vel = None
     obs_first = None      # range at which the injected obstacle first entered the map
@@ -233,6 +234,12 @@ def run_episode(bridge, client, depth_provider, ep, waypoints_ned, cfg):
             tgt_hab = pos_hab + d / nd * carrot
         n_ticks += 1
         blocked_ticks += int(bool(blocked))
+        # A refusal only means something against the truth. Record where the drone stood and
+        # where it wanted to go on a sample of refused ticks, and query the simulator for those
+        # segments AFTER the loop, so the probe cannot slow the flight and drag mean_speed
+        # under the 0.170 validity gate.
+        if blocked and n_ticks % 10 == 0 and len(block_probe) < 40:
+            block_probe.append((pos_hab.copy(), cur_wp_hab.copy()))
         # A subgoal swallowed by an obstacle can never be reached, and the drone would orbit
         # it until timeout. The global route is a suggestion, so drop a subgoal the planner
         # has been unable to approach and steer at the next one. The final goal is never
@@ -258,6 +265,22 @@ def run_episode(bridge, client, depth_provider, ep, waypoints_ned, cfg):
     pl = path_length(gt) if len(gt) > 1 else 0.0
     final_dist = float(np.linalg.norm(gt[-1] - goal_ned)) if len(gt) else float("nan")
     mean_age = float(np.mean(ages)) if ages else 0.0
+    # Refusals the simulator says were wrong: the planner blocked the straight-at-goal segment
+    # and every sample along it is in fact collision-free. This scores the planner's own
+    # decision against truth IN FLIGHT, which a replay of a clean fixed route cannot reach,
+    # because the drone only enters the regime that collapses it after it has already stopped.
+    false_block, n_probed, bad = None, 0, 0
+    for p_hab, g_hab in block_probe:
+        d = g_hab - p_hab
+        nd = float(np.linalg.norm(d))
+        if nd < 1e-6:
+            continue
+        seg = p_hab + np.outer(np.linspace(0.0, 1.0, 5), d / nd * min(plan.step, nd))
+        n_probed += 1
+        if not any(client.collide(q, robot_r).get("hit") for q in seg):
+            bad += 1
+    if n_probed:
+        false_block = round(bad / n_probed, 3)
     return {"success": 0.0 if crashed else float(success),
             "spl": 0.0 if crashed else spl(success, geo, pl),
             "collisions": collisions, "collision_events": collision_events,
@@ -270,6 +293,7 @@ def run_episode(bridge, client, depth_provider, ep, waypoints_ned, cfg):
             "n_keyframes": len(log), "log": log,
             "wp_reached": idx, "n_wps": len(wps), "final_dist": round(final_dist, 2),
             "blocked_frac": round(blocked_ticks / max(1, n_ticks), 2),
+            "false_block": false_block, "n_block_probe": n_probed,
             "obs_first": obs_first, "obs_vox_max": obs_vox_max,
             # A drone that never flew is not a navigation result. PX4's SIH degrades over a
             # long job (battery drain overriding OFFBOARD) and the drone then takes off,

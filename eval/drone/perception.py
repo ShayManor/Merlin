@@ -123,29 +123,48 @@ class Perception:
             from moe.ffn_moe import upcycle_ffn
             from moe.ore import set_route_feature
             tk, cm = ck.get("top_k"), ck.get("council_m")
-            if tk is None:
+            # router_norm whitens the ROUTER INPUT (ore.moe._norm_in) and k-means init puts the
+            # gate rows on centroids of whitened features, so it is part of the function exactly
+            # as top_k is. Defaulting it cost the whole upcycling campaign: every cell trained
+            # with --router-init kmeans and flew here at the upcycle_ffn default of False, which
+            # on moe_k8_step1000 collapsed site-0 routing from expert 0 carrying 35% of tokens to
+            # expert 4 carrying 73%, and moved whole_absrel 0.2075 -> 0.2239.
+            rn = ck.get("router_norm")
+            if tk is None or rn is None:
                 side = os.path.splitext(ckpt)[0] + ".json"
                 base = side.split("_step")[0] + ".json" if "_step" in side else side
                 for cand in (side, base):
                     if os.path.exists(cand):
                         j = json.load(open(cand))
-                        tk, cm = j.get("top_k"), j.get("council_m")
-                        print(f"[perception] top_k/council_m missing from checkpoint, read "
-                              f"{tk}/{cm} from {os.path.basename(cand)}", flush=True)
+                        if tk is None:
+                            tk, cm = j.get("top_k"), j.get("council_m")
+                            print(f"[perception] top_k/council_m missing from checkpoint, read "
+                                  f"{tk}/{cm} from {os.path.basename(cand)}", flush=True)
+                        if rn is None and j.get("router_norm") is not None:
+                            rn = j["router_norm"]
+                            print(f"[perception] router_norm missing from checkpoint, read {rn} "
+                                  f"from {os.path.basename(cand)}", flush=True)
                         break
             if tk is None:
                 raise ValueError(
                     f"{ckpt} is an arm-U checkpoint with no top_k recorded and no sidecar JSON "
                     "beside it. Running it at the wrong top_k silently evaluates a different "
                     "model; copy the run's .json next to the checkpoint instead of guessing.")
+            if rn is None:
+                raise ValueError(
+                    f"{ckpt} is an arm-U checkpoint with no router_norm recorded, in it or in a "
+                    "sidecar JSON. It is True for any run trained with --router-init kmeans. "
+                    "Verify which by rebuilding both ways and matching the run's recorded "
+                    "whole_absrel, then record it; guessing evaluates a different model.")
             upcycle_ffn(self.model, ck["sites"], num_experts=int(ck["k"]), top_k=int(tk),
-                        council_m=int(cm or 0), route_dim=int(ck.get("route_dim") or 0))
+                        council_m=int(cm or 0), router_norm=bool(rn),
+                        route_dim=int(ck.get("route_dim") or 0))
             if ck.get("route_dim"):
                 blk0 = self.model.info_sharing.self_attention_blocks[0]
                 blk0.register_forward_pre_hook(
                     lambda m, i: set_route_feature(self.model, i[0].detach()))
-            print(f"[perception] upcycled checkpoint: K={ck['k']} top_k={tk} council={cm or 0}, "
-                  f"{len(ck['sites'])} sites", flush=True)
+            print(f"[perception] upcycled checkpoint: K={ck['k']} top_k={tk} council={cm or 0} "
+                  f"router_norm={bool(rn)}, {len(ck['sites'])} sites", flush=True)
         elif ck.get("ffn_widen"):
             # Rebuild the widened AAT FFNs. The widths come from the CHECKPOINT'S OWN SHAPES
             # rather than from the ffn_widen metadata: the tensor is the ground truth, and a

@@ -53,7 +53,7 @@ def central_depth(d, frac=0.35):
     return float(np.median(c)) if c.size > 50 else None
 
 
-def push_in(client, p, R, target, max_step):
+def push_in(client, p, R, target, max_step, body_clear=BODY_R):
     """Move the camera along its own view direction until the surface ahead is `target` m
     away. Returns the new render, or None if the pose is unusable."""
     out = client.render(p, R)
@@ -62,7 +62,7 @@ def push_in(client, p, R, target, max_step):
         return None
     step = min(d0 - target, max_step)
     q = np.asarray(p, float) + forward_of(R) * step
-    if client.collide([float(x) for x in q], BODY_R)["hit"]:
+    if client.collide([float(x) for x in q], body_clear)["hit"]:
         return None
     out = client.render(q, R)
     d = out["depth"]
@@ -105,7 +105,7 @@ def generate(client, args, scenes, out_dir):
                     write(out_dir, n, out["rgb"], out["depth"]); n += 1
                 for t in args.targets:
                     tried += 1
-                    out = push_in(client, p, R, t, args.max_step)
+                    out = push_in(client, p, R, t, args.max_step, args.body_clear)
                     if out is None:
                         continue
                     write(out_dir, n, out["rgb"], out["depth"]); n += 1
@@ -140,6 +140,12 @@ def main():
                          "substrings, e.g. chair. The chair recovers only 0.56 of its depth "
                          "step vs 0.76-0.97 for other objects, so thin strut structure has "
                          "to be over-represented on purpose")
+    ap.add_argument("--body_clear", type=float, default=BODY_R,
+                    help="reject a pose with geometry inside this radius. Defaults to the drone "
+                         "body radius, i.e. only poses it could actually fly. Lower it to render "
+                         "a CONTACT subset: those frames are closer than the drone can go, but "
+                         "the band is otherwise unsupervised, and an unsupervised band is exactly "
+                         "what the predicted-range bias measures.")
     ap.add_argument("--targets", nargs="+", type=float, default=[0.35, 0.55, 0.8],
                     help="distances (m) to place the surface ahead at")
     ap.add_argument("--max_step", type=float, default=3.0)
