@@ -183,7 +183,16 @@ class Perception:
             print(f"[perception] widened checkpoint: AAT FFN hidden {hid} "
                   f"(+{ck['ffn_widen']}), {len(self.model.info_sharing.self_attention_blocks)} "
                   f"blocks", flush=True)
-        self.model.load_state_dict(ck["state_dict"])
+        self.core = None
+        if "router_state_dict" in ck:
+            # GateRoute checkpoint (model/gateroute/train_gateroute.py): routed MonoCore graph,
+            # depth only, at the resolution it was trained at.
+            from model.gateroute.gateroute import load_gateroute
+            self.core, _ = load_gateroute(ckpt, self.model, device)
+            print(f"[perception] GateRoute checkpoint: k={ck['k']} res={ck['res']} router={ck['router']}",
+                  flush=True)
+        else:
+            self.model.load_state_dict(ck["state_dict"])
         self.model = self.model.to(device).eval()
         self.device = device
         self.scale = 1.0  # set by set_scale() or calibrate_from_imu()
@@ -203,6 +212,10 @@ class Perception:
         s = (res // 14) * 14
         v = self._load_images([self._tmp], resize_mode="square", size=s)
         v[0]["img"] = v[0]["img"].to(self.device)
+        if self.core is not None:                # GateRoute: no pose head output, identity pose
+            from model.gateroute.come import depth_z
+            dense, scale = self.core(v[0]["img"])
+            return depth_z(dense, scale).cpu().numpy(), np.zeros(3, np.float32), np.array([0, 0, 0, 1], np.float32)
         if aat_depth is not None:
             self.model.info_sharing.depth = aat_depth
         pr = self.model(v, memory_efficient_inference=True, minibatch_size=1)[0]
@@ -316,6 +329,11 @@ class Perception:
         """Metric z-depth (meters) at the chosen operating point, scaled by the
         recovered/injected metric scale. `calib` applies the edge-sharpening calibration
         (see sharpen_edges). Returns (H,W) float."""
+        if self.core is not None and os.environ.get("GATEROUTE_FREEZE") == "1":
+            # random router ablation: reseed every frame so each frame routes the same token set
+            for g in (self.core.gen, self.core.gen_heavy):
+                if g is not None:
+                    g.manual_seed(0)
         d = self.apply_depth_calib(self._raw_depth(rgb, res, aat_depth) * self.scale)
         return sharpen_edges(d, calib)
 

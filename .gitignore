@@ -241,3 +241,6 @@ log.md
 
 # Raw per-episode frame dumps (regenerable via eval/drone/replay.py capture)
 results/drone/**/frames/frames_*.npz
+
+# archived pre-revival docs
+old/
